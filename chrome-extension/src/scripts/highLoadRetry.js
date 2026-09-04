@@ -328,10 +328,14 @@ function hasAdvanced({ appear, disappear }) {
 }
 
 // IRCTC ends a session that idles too long, submits too fast, or trips its bot
-// checks during a Tatkal window; it then bounces the tab to an error/login URL.
-// None of that is retryable - re-clicking a logged-out page only looks more like
-// a bot - so it is treated as terminal and handed back to the user.
-const SESSION_LOST_URL = /\/nget\/error|\/nget\/train-search|\/user\/login|SessionTimeOut|logout/i;
+// checks during a Tatkal window; it then bounces the tab to an error URL. None of
+// that is retryable - re-clicking a logged-out page only looks more like a bot - so
+// it is treated as terminal and handed back to the user.
+//
+// /nget/train-search is deliberately NOT here: that is the page the run starts on
+// and logs in from, so matching it aborted every login. A logout that lands back
+// there is caught by the login form instead.
+const SESSION_LOST_URL = /\/nget\/error|SessionTimeOut|logout/i;
 
 export function isSessionLost(loginSelector) {
   const href = (typeof location !== 'undefined' && location.href) || '';
