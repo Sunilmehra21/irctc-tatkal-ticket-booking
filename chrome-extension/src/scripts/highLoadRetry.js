@@ -30,12 +30,21 @@ export const ERROR_MESSAGE_DEFAULT = [
   '[role="alert"]',
 ].join(', ');
 
+// On the train list IRCTC does not use a toast at all: it replaces the class row
+// with plain text under the tab strip. The message has no class of its own, so it
+// is found by scanning the leaf nodes of the train component.
+export const ERROR_INLINE_SCOPE_DEFAULT = 'app-train-avl-enq';
+
 // Close icons only - a.fa-remove is the passenger remove-row button here, so a
-// general "any close button" list would delete a passenger.
+// general "any close button" list would delete a passenger. The train-row banner
+// closes via span.fa-close inside a div.link; the NTES links in the same banner
+// are also div.link, so the icon has to be named explicitly or a dismiss would
+// navigate off the page.
 export const ERROR_DISMISS_DEFAULT = [
   '.ui-toast-close-icon',
   '.toast-close-button',
   '.ui-growl-icon-close',
+  'app-train-avl-enq .link > .fa-close',
 ].join(', ');
 
 // The high-load toast carries its own retry link, and clicking it is what makes
@@ -127,8 +136,13 @@ export function classifyIrctcError(rawText) {
   return null;
 }
 
+const isPainted = (node) => node.offsetParent !== null || node.getClientRects().length > 0;
+
 // Look through every visible error container for a message we understand.
-export function findIrctcError(errorSelector = ERROR_MESSAGE_DEFAULT) {
+export function findIrctcError(
+  errorSelector = ERROR_MESSAGE_DEFAULT,
+  inlineScope = ERROR_INLINE_SCOPE_DEFAULT,
+) {
   let nodes;
   try {
     nodes = document.querySelectorAll(errorSelector);
@@ -139,10 +153,39 @@ export function findIrctcError(errorSelector = ERROR_MESSAGE_DEFAULT) {
 
   for (const node of nodes) {
     // Toasts stay in the DOM after they fade out, so skip anything not painted.
-    if (node.offsetParent === null && node.getClientRects().length === 0) continue;
+    if (!isPainted(node)) continue;
 
     const found = classifyIrctcError(node.innerText || node.textContent);
     if (found) return { ...found, node };
+  }
+
+  return findInlineIrctcError(inlineScope);
+}
+
+/**
+ * The train-list rejection is rendered inline, not as a toast. Only leaf nodes are
+ * read: the whole row also carries the availability wording, which classifies as
+ * "not our error" and would hide the real message.
+ */
+export function findInlineIrctcError(scopeSelector = ERROR_INLINE_SCOPE_DEFAULT) {
+  if (!scopeSelector) return null;
+
+  let scopes;
+  try {
+    scopes = document.querySelectorAll(scopeSelector);
+  } catch (err) {
+    Logger.error('Invalid inline error scope selector:', scopeSelector, err);
+    return null;
+  }
+
+  for (const scope of scopes) {
+    for (const node of scope.querySelectorAll('div, span, p, strong, td')) {
+      if (node.children.length) continue;
+      if (!isPainted(node)) continue;
+
+      const found = classifyIrctcError(node.textContent);
+      if (found) return { ...found, node };
+    }
   }
   return null;
 }
@@ -267,6 +310,11 @@ export function backoffDelay(attempt) {
  */
 export const RETRY_BUDGET_MS = 150000;
 
+// A step that never changes and never reports anything gets its own, longer stop.
+// IRCTC answers a signed-out session with silence, and without this the wait loop
+// had nothing to end it.
+export const STALL_BUDGET_MS = 180000;
+
 // Derived stop so the loop is finite even if the clock misbehaves: no step can
 // retry more often than its budget could pay for at the shortest delay allowed.
 export function attemptCeiling(budgetMs = RETRY_BUDGET_MS) {
@@ -279,6 +327,27 @@ function hasAdvanced({ appear, disappear }) {
   return false;
 }
 
+// IRCTC ends a session that idles too long, submits too fast, or trips its bot
+// checks during a Tatkal window; it then bounces the tab to an error/login URL.
+// None of that is retryable - re-clicking a logged-out page only looks more like
+// a bot - so it is treated as terminal and handed back to the user.
+const SESSION_LOST_URL = /\/nget\/error|\/nget\/train-search|\/user\/login|SessionTimeOut|logout/i;
+
+export function isSessionLost(loginSelector) {
+  const href = (typeof location !== 'undefined' && location.href) || '';
+  if (SESSION_LOST_URL.test(href)) return true;
+  // The login form reappearing mid-run means the same thing without a URL change.
+  if (loginSelector) {
+    try {
+      const login = document.querySelector(loginSelector);
+      if (login && (login.offsetParent !== null || login.getClientRects().length)) return true;
+    } catch (err) {
+      Logger.error('Invalid login selector for session check:', loginSelector, err);
+    }
+  }
+  return false;
+}
+
 /**
  * Poll until the flow reaches the next page, IRCTC reports an error, or the
  * attempt window runs out. `target` is { appear: selector } or { disappear: selector }.
@@ -286,6 +355,8 @@ function hasAdvanced({ appear, disappear }) {
 export async function waitForOutcome({
   target,
   errorSelector = ERROR_MESSAGE_DEFAULT,
+  inlineScope = ERROR_INLINE_SCOPE_DEFAULT,
+  loginSelector,
   timeoutMs = 20000,
   pollMs = 250,
 }) {
@@ -295,7 +366,9 @@ export async function waitForOutcome({
     // Checked before the error so a stale toast cannot mask real progress.
     if (hasAdvanced(target)) return { status: 'advanced' };
 
-    const error = findIrctcError(errorSelector);
+    if (isSessionLost(loginSelector)) return { status: 'session-lost' };
+
+    const error = findIrctcError(errorSelector, inlineScope);
     if (error) return { status: 'error', error };
 
     if (Date.now() - startTime >= timeoutMs) return { status: 'timeout' };
@@ -311,6 +384,7 @@ export async function waitForOutcome({
  */
 export async function waitForQuiet({
   errorSelector = ERROR_MESSAGE_DEFAULT,
+  inlineScope = ERROR_INLINE_SCOPE_DEFAULT,
   loaderSelector = LOADER_DEFAULT,
   settleMs = 1500,
   timeoutMs = 15000,
@@ -320,7 +394,7 @@ export async function waitForQuiet({
   let quietSince = null;
 
   for (;;) {
-    if (isLoaderVisible(loaderSelector) || findIrctcError(errorSelector)) {
+    if (isLoaderVisible(loaderSelector) || findIrctcError(errorSelector, inlineScope)) {
       quietSince = null;
     } else {
       if (quietSince === null) quietSince = Date.now();
@@ -338,20 +412,24 @@ export async function waitForQuiet({
  *
  * A plain timeout is NOT retried: with no page change and no error message IRCTC
  * is merely slow, and replaying the step could double-submit something it already
- * accepted. Resolves to { ok: true } or
- * { ok: false, reason: 'terminal' | 'exhausted', error }.
+ * accepted. It is still bounded, so a page that goes quiet forever cannot hang the
+ * run. Resolves to { ok: true } or
+ * { ok: false, reason: 'terminal' | 'session-lost' | 'stalled' | 'exhausted', error }.
  */
 export async function advanceOrRetry({
   name,
   target,
   retryAction,
   errorSelector = ERROR_MESSAGE_DEFAULT,
+  inlineScope = ERROR_INLINE_SCOPE_DEFAULT,
   dismissSelector = ERROR_DISMISS_DEFAULT,
   linkSelector = ERROR_TOAST_LINK_DEFAULT,
   loaderSelector = LOADER_DEFAULT,
+  loginSelector,
   attemptTimeoutMs = 20000,
   settleMs = 1500,
   budgetMs = RETRY_BUDGET_MS,
+  stallBudgetMs = STALL_BUDGET_MS,
   click,
 }) {
   const ceiling = attemptCeiling(budgetMs);
@@ -359,16 +437,46 @@ export async function advanceOrRetry({
   // recovery budget of a step that has not failed yet.
   let firstFailureAt = 0;
   let attempt = 0;
+  const enteredAt = Date.now();
 
   for (;;) {
-    const outcome = await waitForOutcome({ target, errorSelector, timeoutMs: attemptTimeoutMs });
+    const outcome = await waitForOutcome({
+      target,
+      errorSelector,
+      inlineScope,
+      loginSelector,
+      timeoutMs: attemptTimeoutMs,
+    });
 
     if (outcome.status === 'advanced') {
       if (attempt > 0) Logger.info(`[${name}] recovered after ${attempt} retry(s).`);
       return { ok: true, attempts: attempt };
     }
 
+    if (outcome.status === 'session-lost') {
+      Logger.error(`[${name}] IRCTC ended the session - it will not accept any more clicks.`);
+      return {
+        ok: false,
+        reason: 'session-lost',
+        error: { message: 'IRCTC signed this session out. Log in again before retrying.' },
+        attempts: attempt,
+      };
+    }
+
     if (outcome.status === 'timeout') {
+      // Nothing to retry - no page change, no message - but this cannot wait
+      // forever either: after a logout IRCTC answers every step with silence.
+      const waitedMs = Date.now() - enteredAt;
+      if (waitedMs >= stallBudgetMs) {
+        Logger.error(`[${name}] nothing happened for ${Math.round(waitedMs / 1000)}s. Stopping.`);
+        return {
+          ok: false,
+          reason: 'stalled',
+          error: { message: `IRCTC stopped responding at "${name}" and reported no error.` },
+          attempts: attempt,
+          elapsedMs: waitedMs,
+        };
+      }
       Logger.warn(`[${name}] still waiting - page has not changed and IRCTC reported nothing yet.`);
       continue;
     }
@@ -391,7 +499,7 @@ export async function advanceOrRetry({
         return { ok: true, attempts: attempt };
       }
       // The message may have been superseded; re-read instead of trusting it.
-      if (!findIrctcError(errorSelector)) continue;
+      if (!findIrctcError(errorSelector, inlineScope)) continue;
     }
 
     if (!firstFailureAt) firstFailureAt = Date.now();
@@ -420,14 +528,26 @@ export async function advanceOrRetry({
 
     // Do not re-fire into a page that is still working or still showing the
     // rejection - that is what turned one bad click into a burst of them.
-    if (!(await waitForQuiet({ errorSelector, loaderSelector, settleMs }))) {
+    if (!(await waitForQuiet({ errorSelector, inlineScope, loaderSelector, settleMs }))) {
       Logger.warn(`[${name}] page never settled; retrying anyway.`);
     }
 
     // The page may have moved on while we were backing off.
     if (hasAdvanced(target)) {
       Logger.info(`[${name}] page moved on during backoff - no retry needed.`);
-      return { ok: true };
+      return { ok: true, attempts: attempt };
+    }
+
+    // Re-checked here as well: a session dropped during the backoff would
+    // otherwise take one more click, which is exactly what IRCTC flags.
+    if (isSessionLost(loginSelector)) {
+      Logger.error(`[${name}] session was lost during backoff - not retrying.`);
+      return {
+        ok: false,
+        reason: 'session-lost',
+        error: { message: 'IRCTC signed this session out. Log in again before retrying.' },
+        attempts: attempt,
+      };
     }
 
     if (retryAction) await retryAction();

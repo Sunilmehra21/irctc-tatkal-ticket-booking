@@ -4,12 +4,15 @@ import {
   ERROR_MESSAGE_DEFAULT,
   ERROR_DISMISS_DEFAULT,
   ERROR_TOAST_LINK_DEFAULT,
+  ERROR_INLINE_SCOPE_DEFAULT,
   LOADER_DEFAULT,
+  STALL_BUDGET_MS,
   advanceOrRetry,
   backoffDelay,
   clickErrorToastLink,
   dismissIrctcError,
   findIrctcError,
+  isSessionLost,
   waitForQuiet,
 } from './highLoadRetry';
 
@@ -31,6 +34,7 @@ let isOpeningDayBooking = false;
 let accommodationClass = '';
 let dateString = '';
 let refreshTime = 5000; // 5 seconds;
+const MIN_REFRESH_TIME = 2000;
 let paymentType = 'BHIM/UPI'; // Rs 20 chargs for bhim/upi, Rs 30 for cards / net banking / wallets
 let paymentMethod = 'BHIM/ UPI/ USSD';   // or IRCTC eWallet
 let paymentProvider = 'PAYTM'; // paytm, amazon 
@@ -122,10 +126,13 @@ let TRAIN_LIST_COMPONENT = 'app-train-list';
 let TRAIN_COMPONENT = 'app-train-avl-enq';
 let FIND_TRAIN_NUMBER = 'app-train-avl-enq .train-heading';
 let AVAILABLE_CLASS = '.pre-avl';
-let SELECTED_CLASS_TAB = 'p-tabmenu li[role="tab"][aria-selected="true"][aria-expanded="true"] a>div';
+let SELECTED_CLASS_TAB = '.ui-tabmenu-nav li[role="tab"][aria-selected="true"] a';
 let BOOK_NOW_BUTTON = 'button.btnDefault.train_Search';
 let BUTTON_DISABLE_CLASS = 'disable-book';
-let LINK_INSERTED = '.link.ng-star-inserted';
+// Marks a completed availability enquiry. Must not match the high-load banner:
+// its close button is also a .link.ng-star-inserted, so the wider selector made
+// every rejection look like fresh availability data.
+let LINK_INSERTED = '.pre-avl';
 
 // POP UP
 let DIALOG_FROM = 'p-confirmdialog[key="tofrom"]';
@@ -185,6 +192,7 @@ let EWALLET_CONFIRM_BUTTON_TEXT = 'CONFIRM';
 let ERROR_MESSAGE = ERROR_MESSAGE_DEFAULT;
 let ERROR_DISMISS = ERROR_DISMISS_DEFAULT;
 let ERROR_TOAST_LINK = ERROR_TOAST_LINK_DEFAULT;
+let ERROR_INLINE_SCOPE = ERROR_INLINE_SCOPE_DEFAULT;
 let LOADER = LOADER_DEFAULT;
 
 // --- Selector Override System ---
@@ -267,6 +275,7 @@ const SELECTOR_VAR_MAP = {
   ERROR_MESSAGE: (v) => { ERROR_MESSAGE = v; },
   ERROR_DISMISS: (v) => { ERROR_DISMISS = v; },
   ERROR_TOAST_LINK: (v) => { ERROR_TOAST_LINK = v; },
+  ERROR_INLINE_SCOPE: (v) => { ERROR_INLINE_SCOPE = v; },
   LOADER: (v) => { LOADER = v; },
 };
 
@@ -405,6 +414,13 @@ function monthToNumber(month) {
 // Function to introduce a small delay
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A refresh loop that fires on an exact interval is a signature no human produces.
+// Spreads each wait over +/-15% so the enquiries do not arrive on a metronome.
+function jitteredDelay(ms) {
+  const spread = Math.round(ms * 0.15);
+  return delay(ms - spread + Math.floor(Math.random() * (spread * 2 + 1)));
 }
 
 // --- GHOST CURSOR UTILITIES ---
@@ -764,6 +780,9 @@ async function callSearchTrainComponent(){
 async function findRootTrain() {
   await delay(500);
   const trainHeadingElements = document.querySelectorAll(FIND_TRAIN_NUMBER);
+  // Cleared up front: a stale index from an earlier search would otherwise point
+  // at whatever row now sits at that position, or at nothing at all.
+  trainFoundAtPosition = -1;
 
   if (!trainHeadingElements || !trainHeadingElements.length) {
     Logger.warn('No Available Trains');
@@ -783,6 +802,7 @@ async function findRootTrain() {
 
   if (!rootElement) {
     Logger.warn('No train found for train number:', trainNumber);
+    trainFoundAtPosition = -1;
     return null;
   }
   return rootElement;
@@ -790,6 +810,10 @@ async function findRootTrain() {
 async function scrollToFoundTrainAndSelectClass() {
 
   let rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
+  if (!rootElement) {
+    Logger.warn('Train row is no longer on the page; cannot select the class.');
+    return;
+  }
 
   await scrollToElement(rootElement);
 
@@ -829,6 +853,12 @@ async function scrollToFoundTrainAndSelectClass() {
 async function refreshTrain() {
   try {
     const rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
+    // Gone once IRCTC navigates away - after a logout it redirects to /nget/error,
+    // where this used to throw on every poll and the error was swallowed below.
+    if (!rootElement) {
+      Logger.warn('Train row is no longer on the page; skipping refresh.');
+      return;
+    }
     const selectedTab = rootElement.querySelector(SELECTED_CLASS_TAB);
     await delay(100);
     if (selectedTab) {
@@ -845,7 +875,10 @@ async function refreshTrain() {
 }
 async function selectAvailableTicket() {
   let rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
-
+  if (!rootElement) {
+    Logger.warn('Train row is no longer on the page; nothing to select.');
+    return false;
+  }
   // Select the first available date
   const availableDateElement = rootElement.querySelector(AVAILABLE_CLASS);
 
@@ -886,8 +919,10 @@ const observer = new MutationObserver((mutationsList, observer) => {
     if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
       // Iterate over added nodes
       for (let node of mutation.addedNodes) {
-        // Check if node matches the selector
-        if (node.matches(LINK_INSERTED)) {
+        // Text nodes have no matches(); the fare row also arrives as a subtree,
+        // so an inserted wrapper counts only when it actually carries a class row.
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        if (node.matches(LINK_INSERTED) || node.querySelector(LINK_INSERTED)) {
           mutationCompletionCounter++;
           Logger.info('Element refreshed: available accommodation classes');
         }
@@ -904,6 +939,14 @@ async function bookTicket() {
   if (trainFoundAtPosition === -1) return;
   let rootElement =
   document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
+  if (!rootElement) {
+    Logger.warn('Train row disappeared before the availability search could start.');
+    return;
+  }
+  // Dropped first: a retry re-enters this function, and Angular may have rebuilt the
+  // row into a different node, so a second registration would double-count refreshes.
+  observer.disconnect();
+  mutationCompletionCounter = 0;
   // Start observing mutations on the parent element
   observer.observe(rootElement, { childList: true, subtree: true });
   
@@ -913,53 +956,83 @@ async function bookTicket() {
 
   // Enquiries refused in a row, so the wait between them can step up.
   let stallStreak = 0;
+  // When the current run of refusals started; cleared by any completed enquiry.
+  let stallSince = 0;
 
   while (!isAvlEnquiryCompleted) {
-    // Check if any new mutations occurred since the last refresh
+    // A dead session answers every enquiry the same way. Polling on is what makes
+    // the run look automated, so stop as soon as IRCTC signs us out.
+    if (isSessionLost(LOGIN_COMPONENT)) {
+      Logger.error('IRCTC ended the session during the availability search.');
+      observer.disconnect();
+      alert('IRCTC signed you out during the search.\n\nPlease log in and continue manually.');
+      return;
+    }
+
+    // Checked before the mutation counter: under load IRCTC replaces the fare row
+    // with its rejection, and that insertion used to be counted as fresh data.
+    const stallError = findIrctcError(ERROR_MESSAGE, ERROR_INLINE_SCOPE);
+
+    if (stallError) {
+      stallStreak += 1;
+      mutationCompletionCounter = 0;
+      if (!stallSince) stallSince = Date.now();
+      const stalledMs = Date.now() - stallSince;
+      // Nothing but refusals for this long means the window or the session is gone;
+      // carrying on would only keep an unwanted request pattern going.
+      if (stalledMs >= STALL_BUDGET_MS) {
+        Logger.error(`IRCTC refused every availability enquiry for ${Math.round(stalledMs / 1000)}s. Stopping.`);
+        observer.disconnect();
+        alert(`IRCTC refused every availability check for ${Math.round(stalledMs / 1000)}s:\n\n${stallError.message}\n\nPlease continue manually.`);
+        return;
+      }
+      Logger.warn(`Availability refresh blocked by IRCTC (${stallStreak} in a row):`, stallError.message);
+      // IRCTC's toast carries a link that re-runs the enquiry; use it when
+      // present, otherwise close the message so the next poll reads fresh state.
+      const usedLink = await clickErrorToastLink({ linkSelector: ERROR_TOAST_LINK, click: humanClick });
+      if (!usedLink) {
+        await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
+      }
+      // Back-to-back clicks into a busy page turn one rejection into a burst.
+      await waitForQuiet({
+        errorSelector: ERROR_MESSAGE,
+        inlineScope: ERROR_INLINE_SCOPE,
+        loaderSelector: LOADER,
+        settleMs: 750,
+        timeoutMs: 8000,
+      });
+      // Wait first, then re-run: the previous order re-clicked immediately and
+      // only then backed off, so the enquiry rate never actually dropped.
+      await delay(backoffDelay(stallStreak));
+      await refreshTrain();
+      continue;
+    }
+
     if (mutationCompletionCounter > 0) {
         try {
             const ticketSelected = await selectAvailableTicket();
             if (ticketSelected) {
                 isAvlEnquiryCompleted = true;
+                observer.disconnect();
                 return;
-            } else {
-                // If ticket selection failed, reset the completion flag
-                isAvlEnquiryCompleted = false;
-                // Reset the counters
-                mutationCompletionCounter = 0;
-                await refreshTrain(); // Refresh the train
             }
+            // Selection failed: the class is simply not open yet, so this counts
+            // as a completed enquiry and the streak resets.
+            isAvlEnquiryCompleted = false;
+            mutationCompletionCounter = 0;
+            stallStreak = 0;
+            stallSince = 0;
+            await refreshTrain();
         } catch (error) {
-            // Handle any errors that occur during ticket selection or train refresh
             Logger.error("An error occurred:", error);
-            // Optionally, you can choose to break the loop or handle the error differently
         }
     } else {
-        // No fresh availability data since the last click. Under load IRCTC
-        // answers the enquiry with a "high load" message and inserts nothing, so
-        // the loop used to spin here forever (issue #86).
-        const stallError = findIrctcError(ERROR_MESSAGE);
-        if (stallError) {
-          stallStreak += 1;
-          Logger.warn(`Availability refresh blocked by IRCTC (${stallStreak} in a row):`, stallError.message);
-          // IRCTC's toast carries a link that re-runs the enquiry; use it when
-          // present, otherwise close the toast so the next poll reads fresh state.
-          const usedLink = await clickErrorToastLink({ linkSelector: ERROR_TOAST_LINK, click: humanClick });
-          if (!usedLink) {
-            await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
-          }
-          // Back-to-back clicks into a busy page turn one rejection into a burst.
-          await waitForQuiet({ errorSelector: ERROR_MESSAGE, loaderSelector: LOADER, settleMs: 750, timeoutMs: 8000 });
-          await refreshTrain();
-          // The enquiry never ran, so this is shorter than refreshTime, but it
-          // steps up on the same 2s-10s curve as every other high-load retry.
-          await delay(backoffDelay(stallStreak));
-          continue;
-        }
         await refreshTrain();
     }
-    stallStreak = 0;
-    await delay(refreshTime); // Adjust the delay as needed
+
+    // Only a clean enquiry earns the configured cadence; a stalled one is
+    // rate-limited above instead.
+    await jitteredDelay(refreshTime);
 }
 
   // Proceed with booking the ticket
@@ -1648,7 +1721,9 @@ async function getSettings() {
       isOpeningDayBooking = items.isOpeningDayBooking;
       accommodationClass = items.accommodationClass;
       dateString = new Date(items.dateString).toLocaleDateString('en-GB');
-      refreshTime = items.refreshTime;
+      // Floored: anything faster than 2s is a request rate no person can produce,
+      // and it is the availability enquiry that IRCTC rate-limits hardest.
+      refreshTime = Math.max(MIN_REFRESH_TIME, Number(items.refreshTime) || MIN_REFRESH_TIME);
       autoPay = items.autoPay;
       paymentType = items.paymentType;
       paymentMethod = items.paymentMethod;
@@ -1708,16 +1783,23 @@ async function advance(name, target, retryAction) {
     target,
     retryAction,
     errorSelector: ERROR_MESSAGE,
+    inlineScope: ERROR_INLINE_SCOPE,
     dismissSelector: ERROR_DISMISS,
     linkSelector: ERROR_TOAST_LINK,
     loaderSelector: LOADER,
+    // Lets the retry loop tell "IRCTC is busy" apart from "IRCTC logged us out".
+    loginSelector: name === 'login' ? undefined : LOGIN_COMPONENT,
     click: humanClick,
   });
 
   if (!result.ok) {
-    const prefix = result.reason === 'terminal'
-      ? 'IRCTC stopped the booking'
-      : `IRCTC kept failing through ${result.attempts} retry attempt(s) over ${Math.round((result.elapsedMs || 0) / 1000)}s`;
+    const prefixes = {
+      terminal: 'IRCTC stopped the booking',
+      'session-lost': 'IRCTC signed you out',
+      stalled: 'IRCTC stopped responding',
+    };
+    const prefix = prefixes[result.reason]
+      || `IRCTC kept failing through ${result.attempts} retry attempt(s) over ${Math.round((result.elapsedMs || 0) / 1000)}s`;
     alert(`${prefix} at "${name}":\n\n${result.error.message}\n\nPlease continue manually.`);
   }
 

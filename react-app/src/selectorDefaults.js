@@ -54,11 +54,11 @@ const SELECTOR_CATEGORIES = {
       AVAILABLE_CLASS: { label: 'Available Class Element', default: '.pre-avl' },
       SELECTED_CLASS_TAB: {
         label: 'Selected Class Tab',
-        default: 'p-tabmenu li[role="tab"][aria-selected="true"][aria-expanded="true"] a>div',
+        default: '.ui-tabmenu-nav li[role="tab"][aria-selected="true"] a',
       },
       BOOK_NOW_BUTTON: { label: 'Book Now Button', default: 'button.btnDefault.train_Search' },
       BUTTON_DISABLE_CLASS: { label: 'Button Disabled Class', default: 'disable-book' },
-      LINK_INSERTED: { label: 'Link Inserted Element', default: '.link.ng-star-inserted' },
+      LINK_INSERTED: { label: 'Availability Refresh Marker', default: '.pre-avl' },
     },
   },
   POPUP: {
@@ -135,7 +135,11 @@ const SELECTOR_CATEGORIES = {
       },
       ERROR_DISMISS: {
         label: 'Error Toast Close Icon',
-        default: '.ui-toast-close-icon, .toast-close-button, .ui-growl-icon-close',
+        default: '.ui-toast-close-icon, .toast-close-button, .ui-growl-icon-close, app-train-avl-enq .link > .fa-close',
+      },
+      ERROR_INLINE_SCOPE: {
+        label: 'Inline Error Scope (train row)',
+        default: 'app-train-avl-enq',
       },
       ERROR_TOAST_LINK: {
         label: 'Retry Link Inside Error Toast',
