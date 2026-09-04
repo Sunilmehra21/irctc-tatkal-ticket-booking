@@ -257,6 +257,22 @@ export function backoffDelay(attempt) {
   return step + Math.floor(Math.random() * 1500);
 }
 
+/**
+ * How long one step may spend recovering.
+ *
+ * The bound is the clock, not a number of attempts: what expires is the seat, and
+ * with exponential backoff a fixed count is worth anywhere between 30s and several
+ * minutes. This also keeps high-load recovery out of the options page - there is
+ * nothing to switch off or set to 0.
+ */
+export const RETRY_BUDGET_MS = 150000;
+
+// Derived stop so the loop is finite even if the clock misbehaves: no step can
+// retry more often than its budget could pay for at the shortest delay allowed.
+export function attemptCeiling(budgetMs = RETRY_BUDGET_MS) {
+  return Math.max(1, Math.ceil(budgetMs / BACKOFF_FLOOR_MS));
+}
+
 function hasAdvanced({ appear, disappear }) {
   if (appear) return !!document.querySelector(appear);
   if (disappear) return !document.querySelector(disappear);
@@ -318,7 +334,7 @@ export async function waitForQuiet({
 
 /**
  * Wait for a booking step to land, retrying whenever IRCTC answers with a
- * transient error.
+ * transient error. Runs on every step with no setting behind it.
  *
  * A plain timeout is NOT retried: with no page change and no error message IRCTC
  * is merely slow, and replaying the step could double-submit something it already
@@ -333,13 +349,15 @@ export async function advanceOrRetry({
   dismissSelector = ERROR_DISMISS_DEFAULT,
   linkSelector = ERROR_TOAST_LINK_DEFAULT,
   loaderSelector = LOADER_DEFAULT,
-  attempts = 12,
   attemptTimeoutMs = 20000,
   settleMs = 1500,
-  budgetMs = 150000,
+  budgetMs = RETRY_BUDGET_MS,
   click,
 }) {
-  const runStart = Date.now();
+  const ceiling = attemptCeiling(budgetMs);
+  // Timed from the first rejection, not from entry: a slow page must not spend the
+  // recovery budget of a step that has not failed yet.
+  let firstFailureAt = 0;
   let attempt = 0;
 
   for (;;) {
@@ -347,7 +365,7 @@ export async function advanceOrRetry({
 
     if (outcome.status === 'advanced') {
       if (attempt > 0) Logger.info(`[${name}] recovered after ${attempt} retry(s).`);
-      return { ok: true };
+      return { ok: true, attempts: attempt };
     }
 
     if (outcome.status === 'timeout') {
@@ -359,7 +377,7 @@ export async function advanceOrRetry({
 
     if (error.kind === 'terminal') {
       Logger.error(`[${name}] IRCTC returned a blocking error:`, error.message);
-      return { ok: false, reason: 'terminal', error };
+      return { ok: false, reason: 'terminal', error, attempts: attempt };
     }
 
     // A toast painted while the overlay is still up does not mean the step
@@ -370,30 +388,27 @@ export async function advanceOrRetry({
       await waitForLoaderToClear({ selector: loaderSelector });
       if (hasAdvanced(target)) {
         Logger.info(`[${name}] page moved on once the request landed - no retry needed.`);
-        return { ok: true };
+        return { ok: true, attempts: attempt };
       }
       // The message may have been superseded; re-read instead of trusting it.
       if (!findIrctcError(errorSelector)) continue;
     }
 
+    if (!firstFailureAt) firstFailureAt = Date.now();
+    const elapsedMs = Date.now() - firstFailureAt;
+
+    if (elapsedMs >= budgetMs || attempt >= ceiling) {
+      Logger.error(
+        `[${name}] giving up after ${attempt} retry(s) over ${Math.round(elapsedMs / 1000)}s. Last error:`,
+        error.message,
+      );
+      return { ok: false, reason: 'exhausted', error, attempts: attempt, elapsedMs };
+    }
+
     attempt += 1;
-    const elapsedMs = Date.now() - runStart;
-
-    if (attempt > attempts) {
-      Logger.error(`[${name}] giving up after ${attempts} retry(s). Last error:`, error.message);
-      return { ok: false, reason: 'exhausted', error };
-    }
-
-    // A wall-clock stop as well as a count: with exponential backoff the last
-    // attempts are slow, and a seat held through minutes of rejections is gone.
-    if (elapsedMs >= budgetMs) {
-      Logger.error(`[${name}] giving up after ${Math.round(elapsedMs / 1000)}s of retrying. Last error:`, error.message);
-      return { ok: false, reason: 'exhausted', error };
-    }
-
     const wait = backoffDelay(attempt);
     Logger.warn(
-      `[${name}] IRCTC is under load (retry ${attempt}/${attempts}, ${Math.round(elapsedMs / 1000)}s in, next in ${Math.round(wait / 1000)}s):`,
+      `[${name}] IRCTC is under load (retry ${attempt}, ${Math.round(elapsedMs / 1000)}s of ${Math.round(budgetMs / 1000)}s used, next in ${Math.round(wait / 1000)}s):`,
       error.message,
     );
 

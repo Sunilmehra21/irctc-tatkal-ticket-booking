@@ -6,6 +6,7 @@ import {
   ERROR_TOAST_LINK_DEFAULT,
   LOADER_DEFAULT,
   advanceOrRetry,
+  backoffDelay,
   clickErrorToastLink,
   dismissIrctcError,
   findIrctcError,
@@ -42,8 +43,6 @@ let travelInsuranceOpted = 'yes';
 let autoSolveCaptcha = false;
 let autoSubmitCaptcha = false;
 let preferredLanguage = 'English';
-let retryOnHighLoad = true;
-let maxRetryAttempts = 12;
 
 const STORAGE_KEY = 'tatkalTicketBookingFormData';
 
@@ -76,9 +75,7 @@ const defaultSettings = {
   travelInsuranceOpted:'yes',
   autoSolveCaptcha:false,
   autoSubmitCaptcha:false,
-  preferredLanguage:'English',
-  retryOnHighLoad: true,
-  maxRetryAttempts: 12
+  preferredLanguage:'English'
 };
 
 
@@ -184,10 +181,6 @@ let ERROR_MESSAGE = ERROR_MESSAGE_DEFAULT;
 let ERROR_DISMISS = ERROR_DISMISS_DEFAULT;
 let ERROR_TOAST_LINK = ERROR_TOAST_LINK_DEFAULT;
 let LOADER = LOADER_DEFAULT;
-
-// Retry delay for a refused availability refresh - shorter than refreshTime,
-// because IRCTC never processed the enquiry.
-const HIGH_LOAD_RETRY_DELAY = 1000;
 
 // --- Selector Override System ---
 // Loads user-customized selectors from chrome.storage and applies them
@@ -927,9 +920,9 @@ async function bookTicket() {
           // Back-to-back clicks into a busy page turn one rejection into a burst.
           await waitForQuiet({ errorSelector: ERROR_MESSAGE, loaderSelector: LOADER, settleMs: 750, timeoutMs: 8000 });
           await refreshTrain();
-          // Shorter than refreshTime because the enquiry never ran, but stepped up
-          // while IRCTC keeps refusing.
-          await delay(Math.min(HIGH_LOAD_RETRY_DELAY * stallStreak, 4000));
+          // The enquiry never ran, so this is shorter than refreshTime, but it
+          // steps up on the same 2s-10s curve as every other high-load retry.
+          await delay(backoffDelay(stallStreak));
           continue;
         }
         await refreshTrain();
@@ -1659,11 +1652,6 @@ async function getSettings() {
       autoSolveCaptcha = items.autoSolveCaptcha;
       autoSubmitCaptcha = items.autoSubmitCaptcha;
       preferredLanguage = items.preferredLanguage;
-      // Opt-out, so settings saved before this feature existed still get retries
-      retryOnHighLoad = items.retryOnHighLoad !== false;
-      maxRetryAttempts = Number(items.maxRetryAttempts) > 0
-        ? Number(items.maxRetryAttempts)
-        : defaultSettings.maxRetryAttempts;
       resolve();
     });
   });
@@ -1702,18 +1690,10 @@ async function dismissLanguagePopup() {
 }
 
 // Wait for a page transition, retrying `retryAction` while IRCTC keeps answering
-// with a transient error. Returns false when the run cannot continue.
+// with a transient error. Always on: a high-load rejection is not a preference,
+// and a run with recovery turned off just hangs on the same click.
+// Returns false when the run cannot continue.
 async function advance(name, target, retryAction) {
-  // Feature off: previous behaviour, wait indefinitely.
-  if (!retryOnHighLoad) {
-    if (target.appear) {
-      await waitForElementToAppear(target.appear);
-    } else {
-      await waitForElementToDisappear(document.querySelector(target.disappear), 0);
-    }
-    return true;
-  }
-
   const result = await advanceOrRetry({
     name,
     target,
@@ -1722,14 +1702,13 @@ async function advance(name, target, retryAction) {
     dismissSelector: ERROR_DISMISS,
     linkSelector: ERROR_TOAST_LINK,
     loaderSelector: LOADER,
-    attempts: maxRetryAttempts,
     click: humanClick,
   });
 
   if (!result.ok) {
     const prefix = result.reason === 'terminal'
       ? 'IRCTC stopped the booking'
-      : `IRCTC is still failing after ${maxRetryAttempts} retry attempt(s)`;
+      : `IRCTC kept failing through ${result.attempts} retry attempt(s) over ${Math.round((result.elapsedMs || 0) / 1000)}s`;
     alert(`${prefix} at "${name}":\n\n${result.error.message}\n\nPlease continue manually.`);
   }
 
