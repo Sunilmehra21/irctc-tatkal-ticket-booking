@@ -19,15 +19,13 @@ const WHITESPACE = /\s+/g;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// The nodes that carry IRCTC's error text: PrimeNG toast internals plus the
-// [role="alert"] it stamps on them.
+// IRCTC's toast is PrimeNG 7 (ui-toast-* namespace), so the message text lives in
+// .ui-toast-detail / .ui-toast-summary inside p-toast. Scoped and named exactly:
+// a generic [role="alert"] also matched ordinary page banners.
 export const ERROR_MESSAGE_DEFAULT = [
-  '.ui-toast-message-text-content',
-  '.ui-toast-detail',
-  '.ui-toast-summary',
-  '.ui-growl-item-container',
-  '.toast-message',
-  '[role="alert"]',
+  'p-toast .ui-toast-detail',
+  'p-toast .ui-toast-summary',
+  'p-toast .ui-toast-message-text-content',
 ].join(', ');
 
 // On the train list IRCTC does not use a toast at all: it replaces the class row
@@ -35,24 +33,16 @@ export const ERROR_MESSAGE_DEFAULT = [
 // is found by scanning the leaf nodes of the train component.
 export const ERROR_INLINE_SCOPE_DEFAULT = 'app-train-avl-enq';
 
-// Close icons only - a.fa-remove is the passenger remove-row button here, so a
-// general "any close button" list would delete a passenger. The train-row banner
-// closes via span.fa-close inside a div.link; the NTES links in the same banner
-// are also div.link, so the icon has to be named explicitly or a dismiss would
-// navigate off the page.
+// The toast's own close control: PrimeNG renders it as <a class="ui-toast-close-icon">
+// inside .ui-toast-message-content. The sibling span.ui-toast-icon.pi-times-circle is
+// only the severity badge and does not close anything. The train-row banner closes
+// via span.fa-close inside a div.link; the NTES links in that banner are also
+// div.link, so the icon has to be named or a dismiss would navigate off the page.
 export const ERROR_DISMISS_DEFAULT = [
-  '.ui-toast-close-icon',
-  '.toast-close-button',
-  '.ui-growl-icon-close',
+  'p-toast .ui-toast-close-icon',
   'app-train-avl-enq .link > .fa-close',
 ].join(', ');
 
-// The high-load toast carries its own retry link, and clicking it is what makes
-// IRCTC re-run the enquiry. One toast sits in the train list, one in the header.
-export const ERROR_TOAST_LINK_DEFAULT = [
-  '#divMain > div > app-train-list > p-toast > div > p-toastitem > div > div > a',
-  'body > app-root > app-home > div.header-fix > app-header > p-toast > div > p-toastitem > div > div > a',
-].join(', ');
 
 // IRCTC blocks the page with a "Please Wait..." overlay while a request runs.
 export const LOADER_DEFAULT = [
@@ -71,6 +61,10 @@ const TRANSIENT_PATTERNS = [
   /we are experiencing high load/i,
   /high load/i,
   /unable to process (your |the )?request/i,
+  // "Error! Unable to perform Transaction. Please try again." - the train list's
+  // most common Tatkal rejection. Listed in its own right so it still classifies
+  // if IRCTC drops the trailing "Please try again".
+  /unable to perform (this )?transaction/i,
   /service (is )?(temporarily )?unavailable/i,
   /server (is )?busy/i,
   /internal server error/i,
@@ -190,32 +184,10 @@ export function findInlineIrctcError(scopeSelector = ERROR_INLINE_SCOPE_DEFAULT)
   return null;
 }
 
-// Click the retry link inside the toast - the recovery IRCTC itself offers on the
-// train list page. Returns true when a link was clicked.
-export async function clickErrorToastLink({
-  linkSelector = ERROR_TOAST_LINK_DEFAULT,
-  click,
-} = {}) {
-  let link;
-  try {
-    link = document.querySelector(linkSelector);
-  } catch (err) {
-    Logger.error('Invalid error toast link selector:', linkSelector, err);
-    return false;
-  }
-  if (!link || (link.offsetParent === null && link.getClientRects().length === 0)) return false;
-
-  if (click) {
-    await click(link);
-  } else {
-    link.click();
-  }
-  Logger.info('Clicked the retry link inside the IRCTC error toast.');
-  return true;
-}
-
 // Close every visible toast, not only the one that matched: under load IRCTC
 // stacks them and a leftover keeps satisfying findIrctcError() on the next poll.
+// The toast has no retry control - the only <a> in it is .ui-toast-close-icon - so
+// re-running the step action is what actually retries.
 export async function dismissIrctcError({
   dismissSelector = ERROR_DISMISS_DEFAULT,
   click,
@@ -427,7 +399,6 @@ export async function advanceOrRetry({
   errorSelector = ERROR_MESSAGE_DEFAULT,
   inlineScope = ERROR_INLINE_SCOPE_DEFAULT,
   dismissSelector = ERROR_DISMISS_DEFAULT,
-  linkSelector = ERROR_TOAST_LINK_DEFAULT,
   loaderSelector = LOADER_DEFAULT,
   loginSelector,
   attemptTimeoutMs = 20000,
@@ -524,9 +495,9 @@ export async function advanceOrRetry({
       error.message,
     );
 
-    // Prefer IRCTC's own retry link when the toast offers one.
-    const usedLink = await clickErrorToastLink({ linkSelector, click });
-    if (!usedLink) await dismissIrctcError({ dismissSelector, click });
+    // Clear the rejection so the next poll reads fresh state; the retryAction
+    // below is what actually re-runs the step.
+    await dismissIrctcError({ dismissSelector, click });
 
     await sleep(wait);
 

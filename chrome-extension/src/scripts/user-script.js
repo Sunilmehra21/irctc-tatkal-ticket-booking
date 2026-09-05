@@ -3,13 +3,11 @@ import extractTextFromImage from './ocr-reader';
 import {
   ERROR_MESSAGE_DEFAULT,
   ERROR_DISMISS_DEFAULT,
-  ERROR_TOAST_LINK_DEFAULT,
   ERROR_INLINE_SCOPE_DEFAULT,
   LOADER_DEFAULT,
   STALL_BUDGET_MS,
   advanceOrRetry,
   backoffDelay,
-  clickErrorToastLink,
   dismissIrctcError,
   findIrctcError,
   isSessionLost,
@@ -54,6 +52,9 @@ const STORAGE_KEY = 'tatkalTicketBookingFormData';
 const CAPTCHA_WAIT_TIME = 3000;
 // The payment page mounts its tiles a moment after the component itself.
 const PAYMENT_OPTIONS_WAIT_TIME = 10000;
+// The language dialog can render after the login modal has already opened, so it
+// gets longer than a page-load wait.
+const LANGUAGE_POPUP_WAIT_TIME = 6000;
 
 const defaultSettings = {
   automationStatus: false,
@@ -178,9 +179,15 @@ let REVIEW_SUBMIT_BUTTON = 'app-review-booking button.btnDefault.train_Search';
 let PAYMENT_COMPONENT = 'app-payment-options';
 let PAYMENT_TYPE = '#pay-type .bank-type';
 let PAYMENT_METHOD = '#pay-type .bank-type';
-let PAYMENT_PROVIDER = '#bank-type .bank-text, #bank-type .pay_tax_text';
-let PAY_BUTTON ='button.btn-primary.ng-star-inserted';
-let PAY_BUTTON_TEXT = 'Pay & Book ';
+// The gateway tiles in the right-hand column.
+let PAYMENT_PROVIDER = '.border-all.no-pad';
+let PAY_BUTTON = '.btn-primary';
+let PAY_BUTTON_TEXT = 'Pay & Book';
+
+// IRCTC drops whole payment groups during a Tatkal window - the Paytm/BHIM tile is
+// the usual casualty. IRCTC's own gateway is always present, so it is the fallback.
+const PAYMENT_METHOD_FALLBACKS = ['IRCTC iPay (Credit Card/Debit Card/UPI)', 'IRCTC iPay'];
+const PAYMENT_PROVIDER_FALLBACKS = ['IRCTC iPay'];
 
 
 let EWALLET_IRCTC_DEFAULT = 'E-Wallet';
@@ -191,7 +198,6 @@ let EWALLET_CONFIRM_BUTTON_TEXT = 'CONFIRM';
 // IRCTC error toast / dialog (high load, service unavailable, session expiry)
 let ERROR_MESSAGE = ERROR_MESSAGE_DEFAULT;
 let ERROR_DISMISS = ERROR_DISMISS_DEFAULT;
-let ERROR_TOAST_LINK = ERROR_TOAST_LINK_DEFAULT;
 let ERROR_INLINE_SCOPE = ERROR_INLINE_SCOPE_DEFAULT;
 let LOADER = LOADER_DEFAULT;
 
@@ -274,7 +280,6 @@ const SELECTOR_VAR_MAP = {
   EWALLET_CONFIRM_BUTTON_TEXT: (v) => { EWALLET_CONFIRM_BUTTON_TEXT = v; },
   ERROR_MESSAGE: (v) => { ERROR_MESSAGE = v; },
   ERROR_DISMISS: (v) => { ERROR_DISMISS = v; },
-  ERROR_TOAST_LINK: (v) => { ERROR_TOAST_LINK = v; },
   ERROR_INLINE_SCOPE: (v) => { ERROR_INLINE_SCOPE = v; },
   LOADER: (v) => { LOADER = v; },
 };
@@ -987,12 +992,9 @@ async function bookTicket() {
         return;
       }
       Logger.warn(`Availability refresh blocked by IRCTC (${stallStreak} in a row):`, stallError.message);
-      // IRCTC's toast carries a link that re-runs the enquiry; use it when
-      // present, otherwise close the message so the next poll reads fresh state.
-      const usedLink = await clickErrorToastLink({ linkSelector: ERROR_TOAST_LINK, click: humanClick });
-      if (!usedLink) {
-        await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
-      }
+      // Close the message so the next poll reads fresh state. The toast has no
+      // retry control of its own - refreshTrain() below is the retry.
+      await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
       // Back-to-back clicks into a busy page turn one rejection into a burst.
       await waitForQuiet({
         errorSelector: ERROR_MESSAGE,
@@ -1545,66 +1547,117 @@ async function handleCaptchaAndContinue() {
     }
   }
 }
+// IRCTC's payment tiles carry HTML entities and non-breaking spaces, so plain
+// textContent comparison misses labels that look identical on screen.
+function normalizePaymentText(value) {
+  return String(value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/ /g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+// Containment both ways: the configured value can be shorter than the tile label
+// ("PAYTM" vs "Paytm UPI") or longer ("BHIM/ UPI/ USSD" vs "BHIM").
+function pickPaymentTile(elements, candidates) {
+  const wanted = candidates.map(normalizePaymentText).filter(Boolean);
+
+  for (const element of elements) {
+    if (!isElementVisible(element)) continue;
+    const text = normalizePaymentText(element.innerText || element.textContent);
+    if (!text) continue;
+    if (wanted.some((candidate) => text.includes(candidate) || candidate.includes(text))) return element;
+  }
+  return null;
+}
+
+// Returns the group element that was clicked, so the gateway step can re-click it.
 async function selectPaymentMethod() {
   // The tiles mount a moment after app-payment-options itself, so querying
   // straight away used to run against an empty list and select nothing (#94).
   await waitForElementToAppear(PAYMENT_METHOD, PAYMENT_OPTIONS_WAIT_TIME);
 
-  // Find all elements with the class "bank-type" and "ng-star-inserted"
-  var elements = document.querySelectorAll(PAYMENT_METHOD);
-
-  // Check if elements exist
-  if (elements.length > 0) {
-    // Loop through each element
-    for (var i = 0; i < elements.length; i++) {
-      var element = elements[i];
-      // Check if the element's text content matches "BHIM/ UPI/ USSD"
-      if (textIncludes(element.textContent, paymentMethod)) {
-        // Click on the element
-        await humanClick(element);
-        Logger.info('Clicked on :', paymentMethod);
-        return; // Exit the loop after clicking the element
-      }
-    }
-  } else {
-    Logger.info('No elements found with the specified classes.');
+  const groups = Array.from(document.querySelectorAll(PAYMENT_METHOD));
+  if (!groups.length) {
+    Logger.warn('No payment groups found with:', PAYMENT_METHOD);
+    return null;
   }
+
+  let group = pickPaymentTile(groups, [paymentMethod]);
+  if (!group) {
+    group = pickPaymentTile(groups, PAYMENT_METHOD_FALLBACKS);
+    if (group) {
+      Logger.warn(`Payment method "${paymentMethod}" is not on the page; falling back to:`, (group.innerText || '').trim());
+    }
+  }
+  if (!group) {
+    Logger.error(`Payment method "${paymentMethod}" not found and no fallback group is available.`);
+    return null;
+  }
+
+  await humanClick(group);
+  Logger.info('Clicked on :', (group.innerText || group.textContent || '').trim());
+  return group;
 }
-async function selectPaymentProvider() {
-  // The provider list only renders after a payment method has been picked.
+
+// Pick the gateway tile in the right-hand column. IRCTC will not generate the iPay
+// QR, or accept the submit, until one is selected. Two passes: the column is
+// sometimes painted before it holds the tiles for the group just clicked, and
+// re-clicking the group refills it.
+async function selectPaymentProvider(paymentGroup) {
   await waitForElementToAppear(PAYMENT_PROVIDER, PAYMENT_OPTIONS_WAIT_TIME);
 
-  // Find all elements with the class "bank-text"
-  var elements = document.querySelectorAll(PAYMENT_PROVIDER);
+  let selected = null;
 
-  // Check if elements exist
-  if (elements.length > 0) {
-    // Loop through each element
-    for (var i = 0; i < elements.length; i++) {
-      var element = elements[i];
-      // Check if the element's text content contains "PAYTM"
-      if (textIncludes(element.textContent, paymentProvider)) {
-        // Simulate a click on the element
-        await humanClick(element);
-        Logger.info('Selected text:', element.textContent);
-        return; // Exit the loop after selecting the text
+  for (let attempt = 1; attempt <= 2 && !selected; attempt += 1) {
+    if (attempt > 1 && paymentGroup) {
+      Logger.info('No gateway tile yet; re-selecting the payment group.');
+      await humanClick(paymentGroup);
+      await delay(260);
+      await waitForElementToAppear(PAYMENT_PROVIDER, 6500);
+    }
+
+    const tiles = Array.from(document.querySelectorAll(PAYMENT_PROVIDER));
+    selected = pickPaymentTile(tiles, [paymentProvider]);
+    if (!selected) {
+      selected = pickPaymentTile(tiles, PAYMENT_PROVIDER_FALLBACKS);
+      if (selected) {
+        Logger.warn(`Gateway "${paymentProvider}" is not on the page; falling back to:`, (selected.innerText || '').trim());
       }
     }
   }
-  Logger.info("No text found containing",paymentProvider);
-}
-async function clickPayButton() {
-  // Find the button with the class "btn-primary" and "ng-star-inserted"
-  var button = document.querySelector(PAY_BUTTON);
 
-  // Check if the button exists and its text content contains "Pay"
-  if (button && textIncludes(button.textContent, PAY_BUTTON_TEXT)) {
-    // Simulate a click on the button
-    await humanClick(button);
-    Logger.info('Clicked on button:', button.textContent);
-  } else {
-    Logger.info("No button found containing 'Pay'.");
+  if (!selected) {
+    Logger.error(`No gateway matched "${paymentProvider}". IRCTC will not accept the payment without one.`);
+    return false;
   }
+
+  selected.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await delay(180);
+  await humanClick(selected);
+  Logger.info('Selected gateway:', (selected.innerText || selected.textContent || '').trim());
+  return true;
+}
+
+async function clickPayButton() {
+  const buttons = Array.from(document.querySelectorAll(PAY_BUTTON))
+    .filter((button) => !button.disabled && isElementVisible(button));
+
+  // The label differs per gateway, so PAY_BUTTON_TEXT is a preference, not a condition.
+  const button = buttons.find((candidate) => textIncludes(candidate.textContent, PAY_BUTTON_TEXT))
+    || buttons[0];
+
+  if (!button) {
+    Logger.warn('No enabled pay button found with:', PAY_BUTTON);
+    return false;
+  }
+
+  button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await delay(180);
+  await humanClick(button);
+  Logger.info('Clicked on button:', (button.textContent || '').trim());
+  return true;
 }
 
 // Function to click the confirm button in the eWallet component
@@ -1755,22 +1808,45 @@ function getAutomationStatus() {
     });
   });
 }
-async function dismissLanguagePopup() {
-    // Wait up to 2.5 seconds for the language dialog to appear (it sometimes takes a moment to render)
-    const dialogAppeared = await waitForElementToAppear(DIALOG_COMPONENT, 2500);
-    if (!dialogAppeared) return;
+// Find the language button for the configured language, anywhere in a dialog that
+// is actually painted.
+function findLanguageButton() {
+  let buttons;
+  try {
+    buttons = document.querySelectorAll(`${DIALOG_COMPONENT} ${LANGUAGE_BUTTON}`);
+  } catch (err) {
+    Logger.error('Invalid language button selector:', LANGUAGE_BUTTON, err);
+    return null;
+  }
 
-    const dialogs = document.querySelectorAll(DIALOG_COMPONENT);
-    for (let dialog of dialogs) {
-        const buttons = Array.from(dialog.querySelectorAll(LANGUAGE_BUTTON));
-        const targetButton = buttons.find(btn => btn.innerText.trim() === preferredLanguage);
-        if (targetButton) {
-            Logger.info("Dismissing language popup with: " + preferredLanguage);
-            await humanClick(targetButton);
-            await waitForElementToDisappear(dialog, 500); // Wait for it to be removed from DOM
-            return;
-        }
+  for (const button of buttons) {
+    if (!isElementVisible(button)) continue;
+    if ((button.innerText || '').trim() === preferredLanguage) return button;
+  }
+  return null;
+}
+
+// Close IRCTC's language dialog. The wait is on the language button, not on
+// DIALOG_COMPONENT: IRCTC keeps an empty <p-dialog modal="true"> in the page from the
+// start, so waiting on that resolved before the real dialog rendered.
+async function dismissLanguagePopup(timeoutMs = LANGUAGE_POPUP_WAIT_TIME) {
+    const targetButton = await waitForCondition(findLanguageButton, timeoutMs);
+    if (!targetButton) return false;
+
+    Logger.info('Dismissing language popup with: ' + preferredLanguage);
+    const dialog = targetButton.closest(DIALOG_COMPONENT) || targetButton;
+    await humanClick(targetButton);
+    await waitForElementToDisappear(dialog, 2000);
+
+    // A click that landed on the login overlay instead leaves the dialog up; one
+    // more attempt, then leave it to the user rather than clicking indefinitely.
+    if (findLanguageButton()) {
+      Logger.warn('Language popup is still open; clicking once more.');
+      const retryButton = findLanguageButton();
+      await humanClick(retryButton);
+      await waitForElementToDisappear(retryButton.closest(DIALOG_COMPONENT) || retryButton, 2000);
     }
+    return true;
 }
 
 // Wait for a page transition, retrying `retryAction` while IRCTC keeps answering
@@ -1785,7 +1861,6 @@ async function advance(name, target, retryAction) {
     errorSelector: ERROR_MESSAGE,
     inlineScope: ERROR_INLINE_SCOPE,
     dismissSelector: ERROR_DISMISS,
-    linkSelector: ERROR_TOAST_LINK,
     loaderSelector: LOADER,
     // Lets the retry loop tell "IRCTC is busy" apart from "IRCTC logged us out".
     loginSelector: name === 'login' ? undefined : LOGIN_COMPONENT,
@@ -1823,12 +1898,17 @@ async function executeFunctions() {
     // wait for home page to load
     await waitForElementToAppear(APP_HEADER);
 
-    // Dismiss any initial popups (like language selection)
+    // The language dialog has to be gone before the login modal opens: a modal
+    // stacked on top of it leaves it open, and its overlay then eats every click.
     await dismissLanguagePopup();
 
     // login page < Page 0 > (a prompt will appear to fill captcha)
     await login();
     if (!(await advance('login', { disappear: LOGIN_COMPONENT }, login))) return;
+
+    // IRCTC sometimes renders the dialog only once the login modal is already up,
+    // so it can still be sitting on the page at this point.
+    await dismissLanguagePopup(1500);
 
     await callSearchTrainComponent();
 
@@ -1863,10 +1943,17 @@ async function executeFunctions() {
     if (!(await advance('review & captcha', { appear: PAYMENT_COMPONENT }, handleCaptchaAndContinue))) return;
 
     // Payment Selection <Page 4>
-    await selectPaymentMethod();
-    await selectPaymentProvider();
+    const paymentGroup = await selectPaymentMethod();
+    const gatewaySelected = await selectPaymentProvider(paymentGroup);
 
     if (autoPay) {
+      // Submitting with no gateway selected is what produced the dead IRCTC iPay
+      // page: it loads, but IRCTC never generates the QR. Hand it over instead.
+      if (!gatewaySelected) {
+        alert(`No payment gateway could be selected for "${paymentProvider}".\n\nPlease pick one on the payment page and pay manually.`);
+        return;
+      }
+
       await clickPayButton();
 
       // Payment Confirmation for Ewallet <Page 5>

@@ -112,9 +112,9 @@ const SELECTOR_CATEGORIES = {
       PAYMENT_COMPONENT: { label: 'Payment Options Component', default: 'app-payment-options' },
       PAYMENT_TYPE: { label: 'Payment Category (#pay-type)', default: '#pay-type .bank-type' },
       PAYMENT_METHOD: { label: 'Payment Method Element', default: '#pay-type .bank-type' },
-      PAYMENT_PROVIDER: { label: 'Payment Bank/Provider (Precision)', default: '#bank-type .bank-text, #bank-type .pay_tax_text' },
-      PAY_BUTTON: { label: 'Pay Button', default: 'button.btn-primary.ng-star-inserted' },
-      PAY_BUTTON_TEXT: { label: 'Pay Button Text', default: 'Pay & Book ' },
+      PAYMENT_PROVIDER: { label: 'Payment Gateway Tile', default: '.border-all.no-pad' },
+      PAY_BUTTON: { label: 'Pay Button', default: '.btn-primary' },
+      PAY_BUTTON_TEXT: { label: 'Pay Button Text', default: 'Pay & Book' },
     },
   },
   EWALLET: {
@@ -131,19 +131,15 @@ const SELECTOR_CATEGORIES = {
     selectors: {
       ERROR_MESSAGE: {
         label: 'Error Message Containers (high load / server errors)',
-        default: '.ui-toast-message-text-content, .ui-toast-detail, .ui-toast-summary, .ui-growl-item-container, .toast-message, [role="alert"]',
+        default: 'p-toast .ui-toast-detail, p-toast .ui-toast-summary, p-toast .ui-toast-message-text-content',
       },
       ERROR_DISMISS: {
         label: 'Error Toast Close Icon',
-        default: '.ui-toast-close-icon, .toast-close-button, .ui-growl-icon-close, app-train-avl-enq .link > .fa-close',
+        default: 'p-toast .ui-toast-close-icon, app-train-avl-enq .link > .fa-close',
       },
       ERROR_INLINE_SCOPE: {
         label: 'Inline Error Scope (train row)',
         default: 'app-train-avl-enq',
-      },
-      ERROR_TOAST_LINK: {
-        label: 'Retry Link Inside Error Toast',
-        default: '#divMain > div > app-train-list > p-toast > div > p-toastitem > div > div > a, body > app-root > app-home > div.header-fix > app-header > p-toast > div > p-toastitem > div > div > a',
       },
       LOADER: {
         label: 'Loading Overlay ("Please Wait...")',
