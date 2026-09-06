@@ -906,8 +906,11 @@ async function selectAvailableTicket() {
   const availableDateElement = rootElement.querySelector(AVAILABLE_CLASS);
 
   if (availableDateElement) {
-    // Extract the date string from the first strong element
-    const avlDate = availableDateElement.querySelector('strong').textContent;
+    // After a rejected enquiry the tile reverts to a "Get Availability" placeholder,
+    // so the date strong may be missing or hold no date; bail and let the loop retry
+    // instead of throwing on the split.
+    const dateLabel = availableDateElement.querySelector('strong');
+    const avlDate = dateLabel ? dateLabel.textContent : '';
     const availableSeatElement = availableDateElement.querySelector('.AVAILABLE');
 
     if (!availableSeatElement && confirmberths) {
@@ -916,7 +919,12 @@ async function selectAvailableTicket() {
       return false;
     }
     // Parse the date string to extract day and month
-    const [day, month] = avlDate.split(', ')[1].split(' ');
+    const avlDateParts = avlDate.split(', ');
+    if (avlDateParts.length < 2) {
+      Logger.warn('Availability date not ready yet; will retry.');
+      return false;
+    }
+    const [day, month] = avlDateParts[1].split(' ');
     const [tday,tmonth,_]= dateString.split('/');
 
     // Check if the formatted date matches the desired date '25/04'
@@ -1044,7 +1052,12 @@ async function bookTicket() {
             stallSince = 0;
             await refreshTrain();
         } catch (error) {
+            // The counter reset above is skipped when the selection throws, so the
+            // next pass used to re-read the same broken row and throw again forever.
             Logger.error("An error occurred:", error);
+            isAvlEnquiryCompleted = false;
+            mutationCompletionCounter = 0;
+            await refreshTrain();
         }
     } else {
         await refreshTrain();
