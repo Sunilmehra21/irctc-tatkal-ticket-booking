@@ -90,6 +90,16 @@ const NOT_OUR_ERROR_PATTERNS = [
   /booking (is )?not allowed|quota/i,
 ];
 
+// Shown for the first second or two of a Tatkal window: the class and quota are
+// right, the clock is just early, and IRCTC clears it the moment the window opens.
+// It carries the word "quota" ("...selected quota and class..."), so without this
+// it fell into the NOT_OUR "quota" pattern and the availability loop stopped
+// refreshing at the exact moment it needed to keep trying.
+const BOOKING_NOT_OPEN_PATTERNS = [
+  /booking not (yet )?started/i,
+  /try after some time/i,
+];
+
 // IRCTC stamps a reference id and the client IP into each rejection, and the id
 // changes on every attempt. Strip anything volatile so repeats of one failure
 // share an identity.
@@ -120,6 +130,12 @@ export function classifyIrctcError(rawText) {
   const message = String(rawText).replace(WHITESPACE, ' ').trim();
   if (!message) return null;
 
+  // Checked before NOT_OUR: this shares the word "quota" with the permanent
+  // "booking not allowed in this quota", but it is the opposite - a window that is
+  // about to open - so it has to be retried, not treated as our-business-none.
+  if (BOOKING_NOT_OPEN_PATTERNS.some((pattern) => pattern.test(message))) {
+    return { message, identity: errorIdentity(message), kind: 'transient' };
+  }
   if (NOT_OUR_ERROR_PATTERNS.some((pattern) => pattern.test(message))) return null;
   if (TERMINAL_PATTERNS.some((pattern) => pattern.test(message))) {
     return { message, identity: errorIdentity(message), kind: 'terminal' };
