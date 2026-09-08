@@ -1005,6 +1005,29 @@ async function bookTicket() {
     const stallError = findIrctcError(ERROR_MESSAGE, ERROR_INLINE_SCOPE);
 
     if (stallError) {
+      // The "booking not yet started" message fires when the class is clicked before
+      // the Tatkal window opens. It's a timing issue, not a server error: the Book
+      // button is disabled and will enable the moment the window opens. Treat it like
+      // the disabled-button case — log once, then let the loop poll naturally instead
+      // of burning the stall budget on a window that is about to open.
+      if (/booking not (yet )?started|try after some time/i.test(stallError.message)) {
+        const bookButton = rootElement?.querySelector(BOOK_NOW_BUTTON);
+        if (bookButton && (bookButton.classList.contains(BUTTON_DISABLE_CLASS) || bookButton.disabled)) {
+          // Dismissed once so it doesn't stack; the loop will poll until the button enables.
+          if (stallStreak === 0) {
+            Logger.info('Tatkal window has not opened yet; waiting for the Book button to enable.');
+          }
+          await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
+          stallStreak = 0;
+          stallSince = 0;
+          // Refresh to trigger a new availability fetch, which increments the mutation
+          // counter so the next loop enters the selection path and checks the button.
+          await refreshTrain();
+          await delay(refreshTime);
+          continue;
+        }
+      }
+
       stallStreak += 1;
       mutationCompletionCounter = 0;
       if (!stallSince) stallSince = Date.now();
