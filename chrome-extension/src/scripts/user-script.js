@@ -1000,7 +1000,39 @@ async function bookTicket() {
       return;
     }
 
-    // Checked before the mutation counter: under load IRCTC replaces the fare row
+    // Selection path runs FIRST: if the date matches and the Book button is
+    // enabled, click it regardless of any leftover toast. The toast is about the
+    // previous refresh, not about the current button state.  This matches the
+    // original main-branch loop order (selection before error handling) and
+    // prevents the stall-handler from blocking the Book click indefinitely.
+    if (mutationCompletionCounter > 0) {
+        try {
+            const ticketSelected = await selectAvailableTicket();
+            if (ticketSelected) {
+                isAvlEnquiryCompleted = true;
+                observer.disconnect();
+                return;
+            }
+            // Selection failed: the class is simply not open yet, so this counts
+            // as a completed enquiry and the streak resets.
+            isAvlEnquiryCompleted = false;
+            mutationCompletionCounter = 0;
+            stallStreak = 0;
+            stallSince = 0;
+            await refreshTrain();
+        } catch (error) {
+            // The counter reset above is skipped when the selection throws, so the
+            // next pass used to re-read the same broken row and throw again forever.
+            Logger.error("An error occurred:", error);
+            isAvlEnquiryCompleted = false;
+            mutationCompletionCounter = 0;
+            await refreshTrain();
+        }
+        await jitteredDelay(refreshTime);
+        continue;
+    }
+
+    // Checked after the selection path: under load IRCTC replaces the fare row
     // with its rejection, and that insertion used to be counted as fresh data.
     const stallError = findIrctcError(ERROR_MESSAGE, ERROR_INLINE_SCOPE);
 
@@ -1013,15 +1045,12 @@ async function bookTicket() {
       if (/booking not (yet )?started|try after some time/i.test(stallError.message)) {
         const bookButton = rootElement?.querySelector(BOOK_NOW_BUTTON);
         if (bookButton && (bookButton.classList.contains(BUTTON_DISABLE_CLASS) || bookButton.disabled)) {
-          // Dismissed once so it doesn't stack; the loop will poll until the button enables.
           if (stallStreak === 0) {
             Logger.info('Tatkal window has not opened yet; waiting for the Book button to enable.');
           }
           await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
           stallStreak = 0;
           stallSince = 0;
-          // Refresh to trigger a new availability fetch, which increments the mutation
-          // counter so the next loop enters the selection path and checks the button.
           await refreshTrain();
           await delay(refreshTime);
           continue;
@@ -1059,32 +1088,8 @@ async function bookTicket() {
       continue;
     }
 
-    if (mutationCompletionCounter > 0) {
-        try {
-            const ticketSelected = await selectAvailableTicket();
-            if (ticketSelected) {
-                isAvlEnquiryCompleted = true;
-                observer.disconnect();
-                return;
-            }
-            // Selection failed: the class is simply not open yet, so this counts
-            // as a completed enquiry and the streak resets.
-            isAvlEnquiryCompleted = false;
-            mutationCompletionCounter = 0;
-            stallStreak = 0;
-            stallSince = 0;
-            await refreshTrain();
-        } catch (error) {
-            // The counter reset above is skipped when the selection throws, so the
-            // next pass used to re-read the same broken row and throw again forever.
-            Logger.error("An error occurred:", error);
-            isAvlEnquiryCompleted = false;
-            mutationCompletionCounter = 0;
-            await refreshTrain();
-        }
-    } else {
-        await refreshTrain();
-    }
+    // No mutation and no error: refresh to trigger a new availability fetch.
+    await refreshTrain();
 
     // Only a clean enquiry earns the configured cadence; a stalled one is
     // rate-limited above instead.
@@ -1100,11 +1105,32 @@ async function bookTicket() {
   );
   Logger.info(endTime);
 }
-// Re-enter the availability loop after IRCTC rejected the "Book Now" click.
+// Re-click the Book Now button after IRCTC rejected it with a high-load error.
+// The availability search already completed — the date/class matched and Book was
+// enabled — so retrying means clicking the same button again, not re-polling.
 async function retryBookTicket() {
-  isAvlEnquiryCompleted = false;
-  mutationCompletionCounter = 0;
-  await bookTicket();
+  if (trainFoundAtPosition === -1) {
+    Logger.warn('[retryBookTicket] Train position lost; cannot retry.');
+    return;
+  }
+  const rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
+  if (!rootElement) {
+    Logger.warn('[retryBookTicket] Train row disappeared; cannot retry.');
+    return;
+  }
+
+  const bookButton = rootElement.querySelector(BOOK_NOW_BUTTON);
+  if (!bookButton) {
+    Logger.warn('[retryBookTicket] Book button not found; cannot retry.');
+    return;
+  }
+  if (bookButton.classList.contains(BUTTON_DISABLE_CLASS) || bookButton.disabled) {
+    Logger.warn('[retryBookTicket] Book button is disabled; cannot retry yet.');
+    return;
+  }
+
+  await humanClick(bookButton);
+  Logger.info('[retryBookTicket] Re-clicked the Book button.');
 }
 // Function to check for the presence of the popup and close it if it exists
 async function closePopupToProceed() {
