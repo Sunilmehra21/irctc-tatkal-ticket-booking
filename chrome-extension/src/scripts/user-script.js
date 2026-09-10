@@ -985,14 +985,9 @@ async function bookTicket() {
 
   await delay(1000);
 
-  // Enquiries refused in a row, so the wait between them can step up.
-  let stallStreak = 0;
-  // When the current run of refusals started; cleared by any completed enquiry.
-  let stallSince = 0;
-
   while (!isAvlEnquiryCompleted) {
-    // A dead session answers every enquiry the same way. Polling on is what makes
-    // the run look automated, so stop as soon as IRCTC signs us out.
+    // A dead session answers every enquiry the same way. Stop before spending 180s
+    // polling a logged-out page.
     if (isSessionLost(LOGIN_COMPONENT)) {
       Logger.error('IRCTC ended the session during the availability search.');
       observer.disconnect();
@@ -1000,11 +995,7 @@ async function bookTicket() {
       return;
     }
 
-    // Selection path runs FIRST: if the date matches and the Book button is
-    // enabled, click it regardless of any leftover toast. The toast is about the
-    // previous refresh, not about the current button state.  This matches the
-    // original main-branch loop order (selection before error handling) and
-    // prevents the stall-handler from blocking the Book click indefinitely.
+    // Check if any new mutations occurred since the last refresh
     if (mutationCompletionCounter > 0) {
         try {
             const ticketSelected = await selectAvailableTicket();
@@ -1012,88 +1003,22 @@ async function bookTicket() {
                 isAvlEnquiryCompleted = true;
                 observer.disconnect();
                 return;
+            } else {
+                // If ticket selection failed, reset the completion flag
+                isAvlEnquiryCompleted = false;
+                // Reset the counters
+                mutationCompletionCounter = 0;
+                await refreshTrain(); // Refresh the train
             }
-            // Selection failed: the class is simply not open yet, so this counts
-            // as a completed enquiry and the streak resets.
-            isAvlEnquiryCompleted = false;
-            mutationCompletionCounter = 0;
-            stallStreak = 0;
-            stallSince = 0;
-            await refreshTrain();
         } catch (error) {
-            // The counter reset above is skipped when the selection throws, so the
-            // next pass used to re-read the same broken row and throw again forever.
+            // Handle any errors that occur during ticket selection or train refresh
             Logger.error("An error occurred:", error);
             isAvlEnquiryCompleted = false;
             mutationCompletionCounter = 0;
             await refreshTrain();
         }
-        await jitteredDelay(refreshTime);
-        continue;
     }
-
-    // Checked after the selection path: under load IRCTC replaces the fare row
-    // with its rejection, and that insertion used to be counted as fresh data.
-    const stallError = findIrctcError(ERROR_MESSAGE, ERROR_INLINE_SCOPE);
-
-    if (stallError) {
-      // The "booking not yet started" message fires when the class is clicked before
-      // the Tatkal window opens. It's a timing issue, not a server error: the Book
-      // button is disabled and will enable the moment the window opens. Treat it like
-      // the disabled-button case — log once, then let the loop poll naturally instead
-      // of burning the stall budget on a window that is about to open.
-      if (/booking not (yet )?started|try after some time/i.test(stallError.message)) {
-        const bookButton = rootElement?.querySelector(BOOK_NOW_BUTTON);
-        if (bookButton && (bookButton.classList.contains(BUTTON_DISABLE_CLASS) || bookButton.disabled)) {
-          if (stallStreak === 0) {
-            Logger.info('Tatkal window has not opened yet; waiting for the Book button to enable.');
-          }
-          await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
-          stallStreak = 0;
-          stallSince = 0;
-          await refreshTrain();
-          await delay(refreshTime);
-          continue;
-        }
-      }
-
-      stallStreak += 1;
-      mutationCompletionCounter = 0;
-      if (!stallSince) stallSince = Date.now();
-      const stalledMs = Date.now() - stallSince;
-      // Nothing but refusals for this long means the window or the session is gone;
-      // carrying on would only keep an unwanted request pattern going.
-      if (stalledMs >= STALL_BUDGET_MS) {
-        Logger.error(`IRCTC refused every availability enquiry for ${Math.round(stalledMs / 1000)}s. Stopping.`);
-        observer.disconnect();
-        alert(`IRCTC refused every availability check for ${Math.round(stalledMs / 1000)}s:\n\n${stallError.message}\n\nPlease continue manually.`);
-        return;
-      }
-      Logger.warn(`Availability refresh blocked by IRCTC (${stallStreak} in a row):`, stallError.message);
-      // Close the message so the next poll reads fresh state. The toast has no
-      // retry control of its own - refreshTrain() below is the retry.
-      await dismissIrctcError({ dismissSelector: ERROR_DISMISS, click: humanClick });
-      // Back-to-back clicks into a busy page turn one rejection into a burst.
-      await waitForQuiet({
-        errorSelector: ERROR_MESSAGE,
-        inlineScope: ERROR_INLINE_SCOPE,
-        loaderSelector: LOADER,
-        settleMs: 750,
-        timeoutMs: 8000,
-      });
-      // Wait first, then re-run: the previous order re-clicked immediately and
-      // only then backed off, so the enquiry rate never actually dropped.
-      await delay(backoffDelay(stallStreak));
-      await refreshTrain();
-      continue;
-    }
-
-    // No mutation and no error: refresh to trigger a new availability fetch.
-    await refreshTrain();
-
-    // Only a clean enquiry earns the configured cadence; a stalled one is
-    // rate-limited above instead.
-    await jitteredDelay(refreshTime);
+    await delay(refreshTime); // Adjust the delay as needed
 }
 
   // Proceed with booking the ticket
