@@ -1444,6 +1444,7 @@ async function addPassengerInputAndContinue() {
     await addCustomPassengerList();
   }
   await addMobileNumber();
+  await selectBoardingStation();
   
   await selectPreferences();
   // Call the function to select the radio button
