@@ -137,6 +137,7 @@ const SELECTOR_CATEGORIES = {
     selectors: {
       ERROR_MESSAGE: {
         label: 'Error Message Containers (high load / server errors)',
+<<<<<<< HEAD
         default: 'p-toast .ui-toast-detail, p-toast .ui-toast-summary, p-toast .ui-toast-message-text-content',
       },
       ERROR_DISMISS: {
@@ -146,6 +147,17 @@ const SELECTOR_CATEGORIES = {
       ERROR_INLINE_SCOPE: {
         label: 'Inline Error Scope (train row)',
         default: 'app-train-avl-enq',
+=======
+        default: '.ui-toast-message-text-content, .ui-toast-detail, .ui-toast-summary, .ui-growl-item-container, .toast-message, [role="alert"]',
+      },
+      ERROR_DISMISS: {
+        label: 'Error Toast Close Icon',
+        default: '.ui-toast-close-icon, .toast-close-button, .ui-growl-icon-close',
+      },
+      ERROR_TOAST_LINK: {
+        label: 'Retry Link Inside Error Toast',
+        default: '#divMain > div > app-train-list > p-toast > div > p-toastitem > div > div > a, body > app-root > app-home > div.header-fix > app-header > p-toast > div > p-toastitem > div > div > a',
+>>>>>>> fix/high-load-retry-v2
       },
       LOADER: {
         label: 'Loading Overlay ("Please Wait...")',
