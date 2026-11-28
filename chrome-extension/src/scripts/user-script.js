@@ -1,33 +1,5 @@
 import Logger from './logger';
 import extractTextFromImage from './ocr-reader';
-import {
-  ERROR_MESSAGE_DEFAULT,
-  ERROR_DISMISS_DEFAULT,
-<<<<<<< HEAD
-  ERROR_INLINE_SCOPE_DEFAULT,
-  LOADER_DEFAULT,
-  STALL_BUDGET_MS,
-  advanceOrRetry,
-  backoffDelay,
-  dismissIrctcError,
-  findIrctcError,
-  isSessionLost,
-  waitForQuiet,
-} from './highLoadRetry';
-=======
-  ERROR_TOAST_LINK_DEFAULT,
-  LOADER_DEFAULT,
-  AVAILABILITY_ERROR_DEFAULT,
-  advanceOrRetry,
-  createRequestGate,
-  holdForPassengerPageMinWait,
-  findAvailabilityError,
-  isWorthRetrying,
-  waitForQuiet,
-  waitForLoaderToClear,
-  dismissIrctcError,
-} from './irctcHighLoad';
->>>>>>> fix/high-load-retry-v2
 
 
 let automationStatus = false;
@@ -42,15 +14,11 @@ let passengerNames = '';
 let trainNumber = '';
 let from = '';
 let to = '';
-// "STATION NAME - CODE", empty means board at the origin station.
-let boardingStation = '';
-let boardingStationSet = false;
 let quotaType = '';
 let isOpeningDayBooking = false;
 let accommodationClass = '';
 let dateString = '';
 let refreshTime = 5000; // 5 seconds;
-const MIN_REFRESH_TIME = 2000;
 let paymentType = 'BHIM/UPI'; // Rs 20 chargs for bhim/upi, Rs 30 for cards / net banking / wallets
 let paymentMethod = 'BHIM/ UPI/ USSD';   // or IRCTC eWallet
 let paymentProvider = 'PAYTM'; // paytm, amazon 
@@ -70,17 +38,6 @@ const STORAGE_KEY = 'tatkalTicketBookingFormData';
 const CAPTCHA_WAIT_TIME = 3000;
 // The payment page mounts its tiles a moment after the component itself.
 const PAYMENT_OPTIONS_WAIT_TIME = 10000;
-// IRCTC opens its No Food confirmation straight after the checkbox is ticked.
-const NO_FOOD_DIALOG_WAIT_TIME = 2000;
-// The language dialog can render after the login modal has already opened, so it
-// gets longer than a page-load wait.
-const LANGUAGE_POPUP_WAIT_TIME = 6000;
-
-// Boarding list: bounded at 24 x 250ms. The loop also stops as soon as the list
-// has rendered without the wanted station, so the full budget is rarely spent.
-const BOARDING_STATION_ATTEMPTS = 24;
-const BOARDING_STATION_POLL_TIME = 250;
-const BOARDING_STATION_REOPEN_EVERY = 6;
 
 const defaultSettings = {
   automationStatus: false,
@@ -95,7 +52,6 @@ const defaultSettings = {
   trainNumber: '',
   from: '',
   to: '',
-  boardingStation: '',
   quotaType: '',
   isOpeningDayBooking: false,
   accommodationClass: '',
@@ -136,31 +92,28 @@ let LOGIN_CAPTCHA_INPUT = 'app-captcha #captcha';
 
 // Search Journey Element
 let JOURNEY_INPUT_COMPONENT = 'app-jp-input';
-let ORIGIN_STATION_CODE = 'input#origin, #origin input';
-let DESTINATION_STATION_CODE = 'input#destination, #destination input';
+let ORIGIN_STATION_CODE = '#origin input';
+let DESTINATION_STATION_CODE = '#destination input';
 let STATION_CODE_LIST = '.ui-autocomplete-items li';
 let JOURNEY_QUOTA = '#journeyQuota>div';
 let JOURNEY_QUOTA_LIST = '#journeyQuota p-dropdownitem span';
-let JOURNEY_DATE = 'input#jDate, #jDate input';
+let JOURNEY_DATE = '#jDate input';
 let CURRENT_TIME = 'app-header .h_head1>span strong';
 let JOURNEY_SEARCH_BUTTON = 'app-jp-input button[type="submit"].search_btn';
 
 // Modify Search Train Element 
 let MODIFY_SEARCH_COMPONENT = 'app-modify-search';
-let MODIFY_JOURNEY_DATE = 'input#journeyDate, #journeyDate input';
+let MODIFY_JOURNEY_DATE = '#journeyDate input';
 
 // TRAIN LIST 
 let TRAIN_LIST_COMPONENT = 'app-train-list';
 let TRAIN_COMPONENT = 'app-train-avl-enq';
 let FIND_TRAIN_NUMBER = 'app-train-avl-enq .train-heading';
 let AVAILABLE_CLASS = '.pre-avl';
-let SELECTED_CLASS_TAB = '.ui-tabmenu-nav li[role="tab"][aria-selected="true"] a';
+let SELECTED_CLASS_TAB = 'p-tabmenu li[role="tab"][aria-selected="true"][aria-expanded="true"] a>div';
 let BOOK_NOW_BUTTON = 'button.btnDefault.train_Search';
 let BUTTON_DISABLE_CLASS = 'disable-book';
-// Marks a completed availability enquiry. Must not match the high-load banner:
-// its close button is also a .link.ng-star-inserted, so the wider selector made
-// every rejection look like fresh availability data.
-let LINK_INSERTED = '.pre-avl';
+let LINK_INSERTED = '.link.ng-star-inserted';
 
 // POP UP
 let DIALOG_FROM = 'p-confirmdialog[key="tofrom"]';
@@ -189,17 +142,9 @@ let PASSENGER_FOOD_CHOICE = 'select[formcontrolname="passengerFoodChoice"]';
 let PASSENGER_MOBILE_NUMBER = 'mobileNumber';
 let PASSENGER_PREFERENCE_AUTOUPGRADATION = 'autoUpgradation';
 let PASSENGER_PREFERENCE_CONFIRMBERTHS = 'confirmberths';
-let PASSENGER_PREFERENCE_NOFOOD = 'input[formcontrolname="noFood"]';
-let PASSENGER_NO_FOOD_DIALOG = 'p-confirmdialog .ui-confirmdialog';
-let PASSENGER_NO_FOOD_DIALOG_OK_TEXT = 'OK';
 let PASSENGER_PREFERENCE_TRAVELINSURANCEOPTED = 'input[type="radio"][name="travelInsuranceOpted-0"]';
 let PASSENGER_SUBMIT_BUTTON = 'app-passenger-input button.btnDefault.train_Search';
 let PASSENGER_PAYMENT_TYPE = 'p-radiobutton[name="paymentType"] input';
-// Boarding points render as <strong>STATION NAME | Dep 10:30</strong>, both in the
-// closed field and in the open list. IRCTC gives them no class of their own.
-let PASSENGER_BOARDING_DROPDOWN = 'p-dropdown[formcontrolname="boardingStation"]';
-let PASSENGER_BOARDING_PANEL = '.ui-dropdown-panel, .p-dropdown-panel';
-let PASSENGER_BOARDING_OPTION = 'strong';
 
 // Review Ticket and Fill Captcha
 let REVIEW_COMPONENT = 'app-review-booking';
@@ -214,50 +159,15 @@ let REVIEW_SUBMIT_BUTTON = 'app-review-booking button.btnDefault.train_Search';
 let PAYMENT_COMPONENT = 'app-payment-options';
 let PAYMENT_TYPE = '#pay-type .bank-type';
 let PAYMENT_METHOD = '#pay-type .bank-type';
-// The gateway tiles in the right-hand column.
-let PAYMENT_PROVIDER = '.border-all.no-pad';
-let PAY_BUTTON = '.btn-primary';
-let PAY_BUTTON_TEXT = 'Pay & Book';
-
-// IRCTC drops whole payment groups during a Tatkal window - the Paytm/BHIM tile is
-// the usual casualty. IRCTC's own gateway is always present, so it is the fallback.
-const PAYMENT_METHOD_FALLBACKS = ['IRCTC iPay (Credit Card/Debit Card/UPI)', 'IRCTC iPay'];
-const PAYMENT_PROVIDER_FALLBACKS = ['IRCTC iPay'];
+let PAYMENT_PROVIDER = '#bank-type .bank-text, #bank-type .pay_tax_text';
+let PAY_BUTTON ='button.btn-primary.ng-star-inserted';
+let PAY_BUTTON_TEXT = 'Pay & Book ';
 
 
 let EWALLET_IRCTC_DEFAULT = 'E-Wallet';
 let EWALLET_COMPONENT = 'app-ewallet-confirm';
 let EWALLET_BUTTON_LIST = 'button.mob-bot-btn.search_btn';
 let EWALLET_CONFIRM_BUTTON_TEXT = 'CONFIRM';
-
-<<<<<<< HEAD
-// IRCTC error toast / dialog (high load, service unavailable, session expiry)
-let ERROR_MESSAGE = ERROR_MESSAGE_DEFAULT;
-let ERROR_DISMISS = ERROR_DISMISS_DEFAULT;
-let ERROR_INLINE_SCOPE = ERROR_INLINE_SCOPE_DEFAULT;
-let LOADER = LOADER_DEFAULT;
-=======
-// IRCTC error toast / dialog (high load, server busy, session expiry) and the
-// "Please Wait..." loading overlay. Real IRCTC elements, overridable through
-// the Selector Editor (ERROR category) so a markup change never silently
-// disables recovery.
-let ERROR_MESSAGE = ERROR_MESSAGE_DEFAULT;
-let ERROR_DISMISS = ERROR_DISMISS_DEFAULT;
-let ERROR_TOAST_LINK = ERROR_TOAST_LINK_DEFAULT;
-let LOADER = LOADER_DEFAULT;
-let AVAILABILITY_ERROR = AVAILABILITY_ERROR_DEFAULT;
-
-// Booking steps run through one serialising gate: IRCTC allows one request
-// per session at a time, and two overlapping steps (a Book Now re-click on
-// top of the first) are what logged users out in PR #102 testing.
-const bookingGate = createRequestGate();
-
-// After Book Now, IRCTC holds the passenger page's Continue for a minimum
-// time (~45 s on the trains we checked). Measured on the device clock; no
-// booking request is fired into that window.
-const PASSENGER_MIN_HOLD_MS = 45000;
-let passengerHoldUntil = 0;
->>>>>>> fix/high-load-retry-v2
 
 // --- Selector Override System ---
 // Loads user-customized selectors from chrome.storage and applies them
@@ -316,15 +226,9 @@ const SELECTOR_VAR_MAP = {
   PASSENGER_MOBILE_NUMBER: (v) => { PASSENGER_MOBILE_NUMBER = v; },
   PASSENGER_PREFERENCE_AUTOUPGRADATION: (v) => { PASSENGER_PREFERENCE_AUTOUPGRADATION = v; },
   PASSENGER_PREFERENCE_CONFIRMBERTHS: (v) => { PASSENGER_PREFERENCE_CONFIRMBERTHS = v; },
-  PASSENGER_PREFERENCE_NOFOOD: (v) => { PASSENGER_PREFERENCE_NOFOOD = v; },
-  PASSENGER_NO_FOOD_DIALOG: (v) => { PASSENGER_NO_FOOD_DIALOG = v; },
-  PASSENGER_NO_FOOD_DIALOG_OK_TEXT: (v) => { PASSENGER_NO_FOOD_DIALOG_OK_TEXT = v; },
   PASSENGER_PREFERENCE_TRAVELINSURANCEOPTED: (v) => { PASSENGER_PREFERENCE_TRAVELINSURANCEOPTED = v; },
   PASSENGER_SUBMIT_BUTTON: (v) => { PASSENGER_SUBMIT_BUTTON = v; },
   PASSENGER_PAYMENT_TYPE: (v) => { PASSENGER_PAYMENT_TYPE = v; },
-  PASSENGER_BOARDING_DROPDOWN: (v) => { PASSENGER_BOARDING_DROPDOWN = v; },
-  PASSENGER_BOARDING_PANEL: (v) => { PASSENGER_BOARDING_PANEL = v; },
-  PASSENGER_BOARDING_OPTION: (v) => { PASSENGER_BOARDING_OPTION = v; },
   REVIEW_COMPONENT: (v) => { REVIEW_COMPONENT = v; },
   REVIEW_TRAIN_HEADER: (v) => { REVIEW_TRAIN_HEADER = v; },
   REVIEW_CAPTCHA_IMAGE: (v) => { REVIEW_CAPTCHA_IMAGE = v; },
@@ -342,16 +246,6 @@ const SELECTOR_VAR_MAP = {
   EWALLET_COMPONENT: (v) => { EWALLET_COMPONENT = v; },
   EWALLET_BUTTON_LIST: (v) => { EWALLET_BUTTON_LIST = v; },
   EWALLET_CONFIRM_BUTTON_TEXT: (v) => { EWALLET_CONFIRM_BUTTON_TEXT = v; },
-  ERROR_MESSAGE: (v) => { ERROR_MESSAGE = v; },
-  ERROR_DISMISS: (v) => { ERROR_DISMISS = v; },
-<<<<<<< HEAD
-  ERROR_INLINE_SCOPE: (v) => { ERROR_INLINE_SCOPE = v; },
-  LOADER: (v) => { LOADER = v; },
-=======
-  ERROR_TOAST_LINK: (v) => { ERROR_TOAST_LINK = v; },
-  LOADER: (v) => { LOADER = v; },
-  AVAILABILITY_ERROR: (v) => { AVAILABILITY_ERROR = v; },
->>>>>>> fix/high-load-retry-v2
 };
 
 async function loadSelectorOverrides() {
@@ -489,13 +383,6 @@ function monthToNumber(month) {
 // Function to introduce a small delay
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// A refresh loop that fires on an exact interval is a signature no human produces.
-// Spreads each wait over +/-15% so the enquiries do not arrive on a metronome.
-function jitteredDelay(ms) {
-  const spread = Math.round(ms * 0.15);
-  return delay(ms - spread + Math.floor(Math.random() * (spread * 2 + 1)));
 }
 
 // --- GHOST CURSOR UTILITIES ---
@@ -809,6 +696,34 @@ async function selectQuota(element,value) {
     }
   }
 }
+// Function to wait for the app-login element to disappear
+async function waitForAppLoginToDisappear() {
+  // Select the app-login element
+  const appLogin = document.querySelector(LOGIN_COMPONENT);
+
+  // If the app-login element is not found, return immediately
+  if (!appLogin) {
+    return;
+  }
+
+  // Create a promise to track the disappearance of the app-login element
+  return new Promise((resolve, reject) => {
+    // Create a mutation observer to watch for changes in the DOM
+    const observer = new MutationObserver((mutationsList, observer) => {
+      // Check if the app-login element is still in the DOM
+      if (!document.contains(appLogin)) {
+        // If the app-login element has been removed, resolve the promise
+        Logger.info('app-login disappear');
+        resolve();
+        // Disconnect the observer
+        observer.disconnect();
+      }
+    });
+
+    // Start observing changes in the DOM, targeting the removal of the app-login element
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+}
 // Function to fill Journey Details
 function shouldUseTimedSearch() {
   return ['TATKAL', 'PREMIUM TATKAL'].includes(quotaType) ||
@@ -855,9 +770,6 @@ async function callSearchTrainComponent(){
 async function findRootTrain() {
   await delay(500);
   const trainHeadingElements = document.querySelectorAll(FIND_TRAIN_NUMBER);
-  // Cleared up front: a stale index from an earlier search would otherwise point
-  // at whatever row now sits at that position, or at nothing at all.
-  trainFoundAtPosition = -1;
 
   if (!trainHeadingElements || !trainHeadingElements.length) {
     Logger.warn('No Available Trains');
@@ -877,7 +789,6 @@ async function findRootTrain() {
 
   if (!rootElement) {
     Logger.warn('No train found for train number:', trainNumber);
-    trainFoundAtPosition = -1;
     return null;
   }
   return rootElement;
@@ -885,10 +796,6 @@ async function findRootTrain() {
 async function scrollToFoundTrainAndSelectClass() {
 
   let rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
-  if (!rootElement) {
-    Logger.warn('Train row is no longer on the page; cannot select the class.');
-    return;
-  }
 
   await scrollToElement(rootElement);
 
@@ -924,64 +831,30 @@ async function scrollToFoundTrainAndSelectClass() {
     accommodationClass
   );
 }
-// refresh the train by re-clicking the selected accommodation class so IRCTC re-sends the availability enquiry.
+// refresh the train by clicking selected open class tab
 async function refreshTrain() {
   try {
     const rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
-<<<<<<< HEAD
-    // Gone once IRCTC navigates away - after a logout it redirects to /nget/error,
-    // where this used to throw on every poll and the error was swallowed below.
-    if (!rootElement) {
-      Logger.warn('Train row is no longer on the page; skipping refresh.');
-      return;
-    }
     const selectedTab = rootElement.querySelector(SELECTED_CLASS_TAB);
     await delay(100);
     if (selectedTab) {
       await humanClick(selectedTab);
-      return;
-=======
-    if (!rootElement) { Logger.warn('refreshTrain: train row not found.'); return; }
-    const classes = rootElement.querySelectorAll(AVAILABLE_CLASS);
-    let target = null;
-    for (const el of classes) {
-      const nameEl = el.querySelector('strong');
-      if (!nameEl) continue;
-      if (textIncludes(nameEl.textContent, accommodationClass)) { target = el; break; }
+    } else {
+      Logger.warn('Selected accommodation tab not found.');
     }
-    await delay(100);
-    if (target) { await humanClick(target); }
-    else {
-      // IRCTC removes the class buttons after a failed enquiry; fall back to
-      // the tab strip so the enquiry is still re-sent.
-      const firstTab = rootElement.querySelector('p-tabmenu li a>div') || rootElement.querySelector(SELECTED_CLASS_TAB);
-      if (firstTab) { Logger.warn('refreshTrain: class buttons missing, using tab fallback.'); await humanClick(firstTab); }
-      else { Logger.warn('refreshTrain: no class tab or button to refresh with.'); }
->>>>>>> fix/high-load-retry-v2
-    }
-    // Under load IRCTC replaces the class-tab strip with its error message, so
-    // there is no tab left to click. Re-selecting the class rebuilds the row.
-    Logger.warn('Selected accommodation tab not found. Re-selecting the class.');
-    await scrollToFoundTrainAndSelectClass();
   } catch (error) {
     Logger.error('An error occurred while refreshing the train:', error);
   }
 }
 async function selectAvailableTicket() {
   let rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
-  if (!rootElement) {
-    Logger.warn('Train row is no longer on the page; nothing to select.');
-    return false;
-  }
+
   // Select the first available date
   const availableDateElement = rootElement.querySelector(AVAILABLE_CLASS);
 
   if (availableDateElement) {
-    // After a rejected enquiry the tile reverts to a "Get Availability" placeholder,
-    // so the date strong may be missing or hold no date; bail and let the loop retry
-    // instead of throwing on the split.
-    const dateLabel = availableDateElement.querySelector('strong');
-    const avlDate = dateLabel ? dateLabel.textContent : '';
+    // Extract the date string from the first strong element
+    const avlDate = availableDateElement.querySelector('strong').textContent;
     const availableSeatElement = availableDateElement.querySelector('.AVAILABLE');
 
     if (!availableSeatElement && confirmberths) {
@@ -990,12 +863,7 @@ async function selectAvailableTicket() {
       return false;
     }
     // Parse the date string to extract day and month
-    const avlDateParts = avlDate.split(', ');
-    if (avlDateParts.length < 2) {
-      Logger.warn('Availability date not ready yet; will retry.');
-      return false;
-    }
-    const [day, month] = avlDateParts[1].split(' ');
+    const [day, month] = avlDate.split(', ')[1].split(' ');
     const [tday,tmonth,_]= dateString.split('/');
 
     // Check if the formatted date matches the desired date '25/04'
@@ -1006,15 +874,7 @@ async function selectAvailableTicket() {
       // Check if the book ticket button is available
       const bookTicketButton = rootElement.querySelector(BOOK_NOW_BUTTON);
       if (bookTicketButton && !bookTicketButton.classList.contains(BUTTON_DISABLE_CLASS)) {
-        // The click runs through the booking gate so a Book Now can never be
-        // fired while another booking step is in flight (the double-submit
-        // that logged users out in PR #102 testing).
-        await bookingGate.run(async () => {
-          await humanClick(bookTicketButton); // Click on the book ticket button
-        });
-        // IRCTC holds the passenger page Continue for a minimum time (~45 s).
-        // Arm the hold here so it is honoured before we click Continue.
-        passengerHoldUntil = Date.now() + PASSENGER_MIN_HOLD_MS;
+        await humanClick(bookTicketButton); // Click on the book ticket button
         return true; // Indicate that the ticket is selected
       }
     }
@@ -1029,10 +889,8 @@ const observer = new MutationObserver((mutationsList, observer) => {
     if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
       // Iterate over added nodes
       for (let node of mutation.addedNodes) {
-// Check if node matches the selector. Text and comment nodes (Angular
-// adds comment anchors) have no matches(), so skip anything but elements.
-if (node.nodeType === Node.ELEMENT_NODE) {
-  if (node.matches(LINK_INSERTED) || node.querySelector(LINK_INSERTED)) {
+        // Check if node matches the selector
+        if (node.matches(LINK_INSERTED)) {
           mutationCompletionCounter++;
           Logger.info('Element refreshed: available accommodation classes');
         }
@@ -1049,14 +907,6 @@ async function bookTicket() {
   if (trainFoundAtPosition === -1) return;
   let rootElement =
   document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
-  if (!rootElement) {
-    Logger.warn('Train row disappeared before the availability search could start.');
-    return;
-  }
-  // Dropped first: a retry re-enters this function, and Angular may have rebuilt the
-  // row into a different node, so a second registration would double-count refreshes.
-  observer.disconnect();
-  mutationCompletionCounter = 0;
   // Start observing mutations on the parent element
   observer.observe(rootElement, { childList: true, subtree: true });
   
@@ -1064,28 +914,13 @@ async function bookTicket() {
 
   await delay(1000);
 
-  let stallStreak = 0;
-  const MAX_REFRESH_RETRIES = 12;
   while (!isAvlEnquiryCompleted) {
-    // A dead session answers every enquiry the same way. Stop before spending 180s
-    // polling a logged-out page.
-    if (isSessionLost(LOGIN_COMPONENT)) {
-      Logger.error('IRCTC ended the session during the availability search.');
-      observer.disconnect();
-      alert('IRCTC signed you out during the search.\n\nPlease log in and continue manually.');
-      return;
-    }
-
     // Check if any new mutations occurred since the last refresh
     if (mutationCompletionCounter > 0) {
-        // Fresh availability rows arrived, so the last enquiry landed and we
-        // are no longer stalling.
-        stallStreak = 0;
         try {
             const ticketSelected = await selectAvailableTicket();
             if (ticketSelected) {
                 isAvlEnquiryCompleted = true;
-                observer.disconnect();
                 return;
             } else {
                 // If ticket selection failed, reset the completion flag
@@ -1097,47 +932,11 @@ async function bookTicket() {
         } catch (error) {
             // Handle any errors that occur during ticket selection or train refresh
             Logger.error("An error occurred:", error);
-<<<<<<< HEAD
-            isAvlEnquiryCompleted = false;
-            mutationCompletionCounter = 0;
-            await refreshTrain();
-=======
->>>>>>> fix/high-load-retry-v2
+            // Optionally, you can choose to break the loop or handle the error differently
         }
-    } else if (!isElementVisible(document.querySelector(LOADER))) {
-        // Nothing arrived and IRCTC is not waiting on a request, so the last
-        // enquiry failed ("We are experiencing High Load - Please retry."), which
-        // adds no availability rows. Ask again, as a person would press Refresh.
-        // Never while the loader is up, so a pending enquiry is not doubled.
-        const availabilityError = findAvailabilityError(rootElement, AVAILABILITY_ERROR);
-        if (availabilityError && !isWorthRetrying(availabilityError)) {
-          Logger.error("IRCTC rejected the availability request:", availabilityError);
-          alert("IRCTC says:\n\n" + availabilityError + "\n\nAuto refresh has stopped. Please continue manually.");
-          return;
-        }
-        if (stallStreak >= MAX_REFRESH_RETRIES) {
-          Logger.error("Max availability refresh retries reached — stopping to avoid hammering IRCTC.");
-          alert("IRCTC keeps returning high load. Auto refresh stopped after " + MAX_REFRESH_RETRIES + " retries. Please continue manually.");
-          return;
-        }
-        stallStreak += 1;
-        Logger.warn("No availability received. Refreshing the class again.", availabilityError);
-        // Dismiss any lingering IRCTC error toast before re-requesting.
-        await dismissIrctcError({ dismissSelector: ERROR_DISMISS_DEFAULT, click: humanClick });
-        await refreshTrain(); // Read-only re-check of the class availability.
-        // Wait for IRCTC to answer: either new rows appear or the error toast shows.
-        const settled = await waitForQuiet({
-          errorSelector: AVAILABILITY_ERROR,
-          loaderSelector: LOADER_DEFAULT,
-          settleMs: 1500,
-          timeoutMs: 8000,
-        });
-        if (!settled) Logger.warn("Page did not settle after refresh; retrying anyway.");
     }
-    // Pace the loop: steady refresh normally, stepping up while IRCTC keeps
-    // refusing the enquiry (high load), so we never hammer a struggling server.
-    await delay(stallStreak > 0 ? refreshTime * stallStreak : refreshTime);
-  }
+    await delay(refreshTime); // Adjust the delay as needed
+}
 
   // Proceed with booking the ticket
   const endTime = new Date(); // Record the end time
@@ -1147,33 +946,6 @@ async function bookTicket() {
     'ms'
   );
   Logger.info(endTime);
-}
-// Re-click the Book Now button after IRCTC rejected it with a high-load error.
-// The availability search already completed — the date/class matched and Book was
-// enabled — so retrying means clicking the same button again, not re-polling.
-async function retryBookTicket() {
-  if (trainFoundAtPosition === -1) {
-    Logger.warn('[retryBookTicket] Train position lost; cannot retry.');
-    return;
-  }
-  const rootElement = document.querySelectorAll(TRAIN_COMPONENT)[trainFoundAtPosition];
-  if (!rootElement) {
-    Logger.warn('[retryBookTicket] Train row disappeared; cannot retry.');
-    return;
-  }
-
-  const bookButton = rootElement.querySelector(BOOK_NOW_BUTTON);
-  if (!bookButton) {
-    Logger.warn('[retryBookTicket] Book button not found; cannot retry.');
-    return;
-  }
-  if (bookButton.classList.contains(BUTTON_DISABLE_CLASS) || bookButton.disabled) {
-    Logger.warn('[retryBookTicket] Book button is disabled; cannot retry yet.');
-    return;
-  }
-
-  await humanClick(bookButton);
-  Logger.info('[retryBookTicket] Re-clicked the Book button.');
 }
 // Function to check for the presence of the popup and close it if it exists
 async function closePopupToProceed() {
@@ -1417,63 +1189,15 @@ async function addMobileNumber() {
     Logger.error('Invalid mobile number:', pMobileNumber);
   }
 }
-function allPassengersWantNoFood() {
-  // The IRCTC master list carries no food choice, so leave IRCTC's default.
-  if (masterData) return false;
-
-  const selected = passengerList.filter((passenger) => passenger.isSelected);
-  return selected.length > 0 && selected.every((passenger) => passenger.foodChoice === 'D');
-}
-// Ticking "I don't want Food/Beverages" opens an IRCTC confirmation over the
-// passenger form. Press OK on that dialog only, then wait for it to close.
-async function confirmNoFoodDialog() {
-  const dialog = await waitForCondition(() => {
-    for (const element of document.querySelectorAll(PASSENGER_NO_FOOD_DIALOG)) {
-      if (isElementVisible(element) && textIncludes(element.textContent, 'Food')) return element;
-    }
-    return null;
-  }, NO_FOOD_DIALOG_WAIT_TIME, 100);
-
-  if (!dialog) {
-    Logger.info('No confirmation shown for No Food.');
-    return;
-  }
-
-  const okButton = Array.from(dialog.querySelectorAll('button'))
-    .find((button) => button.textContent.trim() === PASSENGER_NO_FOOD_DIALOG_OK_TEXT);
-
-  if (!okButton) {
-    Logger.warn('No Food confirmation is open but its OK button was not found.');
-    return;
-  }
-
-  await humanClick(okButton);
-  await waitForElementToDisappear(dialog, NO_FOOD_DIALOG_WAIT_TIME);
-  Logger.info('Confirmed the No Food dialog.');
-}
 async function selectPreferences(){
-  // Clicking a checkbox flips it, so only click when its current state differs
-  // from the saved preference. IRCTC may render either box already ticked.
   var autoUpgradationInput = document.getElementById(PASSENGER_PREFERENCE_AUTOUPGRADATION);
-  if(autoUpgradationInput && autoUpgradationInput.checked !== autoUpgradation){
-    autoUpgradationInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await humanClick(autoUpgradationInput);
-  }
-
+  autoUpgradationInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if(autoUpgradationInput && autoUpgradation)
+     await humanClick(autoUpgradationInput);
+  
   var confirmberthsInput = document.getElementById(PASSENGER_PREFERENCE_CONFIRMBERTHS);
-  if(confirmberthsInput && confirmberthsInput.checked !== confirmberths)
+  if(confirmberthsInput && confirmberths)
     await humanClick(confirmberthsInput);
-
-  // Some trains (e.g. Tejas) ask "I don't want Food/Beverages" once for the
-  // whole booking instead of a food choice per passenger. IRCTC leaves it
-  // unchecked, which adds catering, so tick it when every passenger is No Food.
-  var noFoodInput = document.querySelector(PASSENGER_PREFERENCE_NOFOOD);
-  var noFood = allPassengersWantNoFood();
-  if(noFoodInput && noFoodInput.checked !== noFood){
-    await humanClick(noFoodInput);
-    if(noFood)
-      await confirmNoFoodDialog();
-  }
 
   // Find all input elements of type radio
   var inputs = document.querySelectorAll(PASSENGER_PREFERENCE_TRAVELINSURANCEOPTED);
@@ -1494,7 +1218,7 @@ async function selectPreferences(){
       }
     }
   }
-  Logger.info('Auto Upgradation:', autoUpgradation, 'Confirm Berths:', confirmberths, 'No Food:', noFoodInput ? noFoodInput.checked : 'not offered', 'Travel Insurance Opted:', travelInsuranceOpted);
+  Logger.info('Auto Upgradation:', autoUpgradation, 'Confirm Berths:', confirmberths, 'Travel Insurance Opted:', travelInsuranceOpted);
 }
 async function selectPaymentType() {
   // Find all input elements of type radio on the passenger page
@@ -1517,121 +1241,8 @@ async function selectPaymentType() {
     }
   }
 }
-// The boarding field is a PrimeNG dropdown. Prefer its form control, and fall back
-// to the only dropdown on the page whose label reads "STATION | Dep 10:30".
-function findBoardingDropdown() {
-  const byFormControl = document.querySelector(PASSENGER_BOARDING_DROPDOWN);
-  if (byFormControl) return byFormControl;
-
-  const scope = document.querySelector(PASSENGER_APP_COMPONENT) || document;
-  const dropdowns = Array.from(scope.querySelectorAll('p-dropdown')).filter(isElementVisible);
-  return dropdowns.find((dropdown) => textIncludes(dropdown.innerText || dropdown.textContent || '', '|')) || null;
-}
-
-function openBoardingPanels() {
-  return Array.from(document.querySelectorAll(PASSENGER_BOARDING_PANEL)).filter(isElementVisible);
-}
-
-// Options when the list is open, the selected label when it is closed. Only a label
-// that matches the wanted station is ever clicked, so a closed list is harmless.
-function boardingOptions(dropdown) {
-  const roots = openBoardingPanels();
-  if (!roots.length && dropdown) roots.push(dropdown);
-
-  const options = [];
-  roots.forEach((root) => {
-    Array.from(root.querySelectorAll(PASSENGER_BOARDING_OPTION)).forEach((option) => {
-      if (isElementVisible(option)) options.push(option);
-    });
-  });
-  return options;
-}
-
-function boardingLabel(dropdown) {
-  if (!dropdown) return null;
-  return dropdown.querySelector('.ui-dropdown-label, .p-dropdown-label');
-}
-
-async function openBoardingList(dropdown) {
-  const trigger = dropdown.querySelector('.ui-dropdown-trigger, .p-dropdown-trigger');
-  const opener = trigger || boardingLabel(dropdown) || dropdown;
-  opener.scrollIntoView({ block: 'center' });
-  await humanClick(opener);
-}
-
-// A panel left open swallows the clicks meant for the passenger rows below it.
-async function closeBoardingPanel(dropdown) {
-  if (!openBoardingPanels().length) return;
-
-  const trigger = dropdown && dropdown.querySelector('.ui-dropdown-trigger, .p-dropdown-trigger');
-  if (trigger) await humanClick(trigger);
-  if (openBoardingPanels().length) document.body.click();
-}
-// IRCTC preselects the origin station. Changing it means opening the dropdown and
-// clicking the wanted station's label. Saved as "STATION NAME - CODE" because the
-// list shows names, not codes, so either half is accepted here.
-async function fillBoardingStation() {
-  if (!boardingStation) return false;
-  if (boardingStationSet) {
-    Logger.info('Boarding station already set, skipping.');
-    return true;
-  }
-
-  const [rawName, rawCode] = String(boardingStation).split(/\s*-\s*/);
-  const wantName = String(rawName || '').trim().toUpperCase();
-  const wantCode = String(rawCode || '').trim().toUpperCase();
-  if (!wantName && !wantCode) return false;
-
-  const matches = (element) => {
-    const text = (element.innerText || element.textContent || '').toUpperCase();
-    return (wantName && text.includes(wantName)) || (wantCode && text.includes(wantCode));
-  };
-
-  let nextOpenAttempt = 0;
-
-  for (let attempt = 0; attempt < BOARDING_STATION_ATTEMPTS; attempt += 1) {
-    const dropdown = findBoardingDropdown();
-    const options = boardingOptions(dropdown);
-    const target = options.find(matches);
-
-    if (target) {
-      target.scrollIntoView({ block: 'center' });
-      await humanClick(target);
-      await delay(BOARDING_STATION_POLL_TIME);
-      await closeBoardingPanel(dropdown);
-
-      // Read the closed field back: a click PrimeNG did not commit leaves the old
-      // station, and submitting then books the wrong boarding point.
-      if (!dropdown || matches(dropdown)) {
-        boardingStationSet = true;
-        Logger.info('Boarding station selected:', boardingStation);
-        return true;
-      }
-      Logger.warn('Boarding station click did not commit, retrying.');
-      nextOpenAttempt = attempt + 1;
-      continue;
-    }
-
-    // The list is open and has rendered without the wanted station, so this train
-    // does not stop there. Keep the default instead of spending the whole budget.
-    if (openBoardingPanels().length && options.length > 1) break;
-
-    if (dropdown && !openBoardingPanels().length && attempt >= nextOpenAttempt) {
-      await openBoardingList(dropdown);
-      nextOpenAttempt = attempt + BOARDING_STATION_REOPEN_EVERY;
-    }
-    await delay(BOARDING_STATION_POLL_TIME);
-  }
-
-  await closeBoardingPanel(findBoardingDropdown());
-  Logger.warn('Boarding station not available, keeping the default:', boardingStation);
-  return false;
-}
 async function addPassengerInputAndContinue() {
   const startTime = new Date(); // Record the start time
-  boardingStationSet = false;
-  // Boarding point first: IRCTC reloads the fare block when it changes
-  await fillBoardingStation();
   // fill all passenger list
   if(masterData){
     await addMasterPassengerList();
@@ -1646,35 +1257,6 @@ async function addPassengerInputAndContinue() {
   await selectPaymentType();
   // MANDATORY HUMAN PAUSE
   await delay(100);
-
-  // IRCTC holds this page's Continue for a minimum time after Book Now (~45 s
-  // on the trains we checked). Retrying into that window only adds requests and
-  // can look like a double click, so wait the hold out on the device clock while
-  // keeping the session warm, then submit.
-  if (passengerHoldUntil > Date.now()) {
-    Logger.info("Passenger page minimum hold - waiting", Math.round((passengerHoldUntil - Date.now()) / 1000), "s before Continue.");
-    await holdForPassengerPageMinWait(
-      {
-        // Session warmth: a lightweight re-read of the page state. No booking
-        // request is fired into the hold window.
-        keepAlive: async () => {
-          try {
-            if (typeof humanClick !== "function") return;
-          } catch {
-            /* best effort */
-          }
-        },
-        onTick: (remainingMs) => {
-          // Progress is logged at 10 s granularity so a stalled hold is visible.
-          if (Math.floor(remainingMs / 10000) !== Math.floor((remainingMs + 250) / 10000)) {
-            Logger.info("Passenger page hold:", Math.ceil(remainingMs / 1000), "s remaining.");
-          }
-        },
-      },
-      passengerHoldUntil,
-    );
-    passengerHoldUntil = 0;
-  }
 
   // Find the "Continue" button
   var continueButton = document.querySelector(PASSENGER_SUBMIT_BUTTON);
@@ -1694,72 +1276,6 @@ async function addPassengerInputAndContinue() {
      'ms'
    );
    Logger.info(endTime);
-}
-
-// How many passenger rows the form should hold for the configured booking.
-function expectedPassengerRowCount() {
-  const list = masterData
-    ? (passengerNames || []).filter((p) => p.isSelected)
-    : (passengerList || []).filter((p) => p.isSelected);
-  return list.length || 1;
-}
-
-// IRCTC leaves the form as it was when it rejects the submit, so this is normally
-// true and the right recovery is to submit the same form again.
-function passengerFormLooksFilled() {
-  const rows = document.querySelectorAll(PASSENGER_COMPONENT);
-  if (rows.length !== expectedPassengerRowCount()) return false;
-
-  for (const row of rows) {
-    const nameInput = row.querySelector(PASSENGER_NAME_INPUT);
-    const ageInput = row.querySelector(PASSENGER_AGE_INPUT);
-    if (!nameInput || !nameInput.value.trim()) return false;
-    if (!ageInput || !ageInput.value.trim()) return false;
-  }
-  return true;
-}
-
-// Back to the single default row addCustomPassengerList() expects.
-async function resetPassengerRowsToOne() {
-  for (let guard = 0; guard < 12; guard += 1) {
-    if (document.querySelectorAll(PASSENGER_COMPONENT).length <= 1) return;
-    const removeLinks = document.querySelectorAll(PASSENGER_REMOVE_ROW);
-    if (!removeLinks.length) return;
-    await humanClick(removeLinks[removeLinks.length - 1]);
-    await delay(100);
-  }
-}
-
-/**
- * Retry the passenger page without duplicating anybody.
- *
- * Re-running addPassengerInputAndContinue() blind is only safe for one passenger:
- * addCustomPassengerList() removes the default row then adds one row per
- * passenger, so a second run on a form holding N rows leaves 2N-1, and every
- * further retry doubles again. Re-submit the form as it stands when intact; only
- * re-fill (from a cleaned form) when IRCTC really did reset it.
- */
-async function retryPassengerSubmit() {
-  if (!document.querySelector(PASSENGER_APP_COMPONENT)) {
-    Logger.warn('Passenger page is no longer on screen - nothing to re-submit.');
-    return;
-  }
-
-  if (passengerFormLooksFilled()) {
-    Logger.info('Passenger form survived the error - re-submitting it unchanged.');
-    const continueButton = document.querySelector(PASSENGER_SUBMIT_BUTTON);
-    if (!continueButton) {
-      Logger.error('Continue button not found on the passenger page.');
-      return;
-    }
-    continueButton.focus();
-    await humanClick(continueButton);
-    return;
-  }
-
-  Logger.warn('Passenger form was reset by IRCTC - clearing leftover rows and filling it again.');
-  await resetPassengerRowsToOne();
-  await addPassengerInputAndContinue();
 }
 
 // async function handleCaptchaAndContinue() {
@@ -1860,117 +1376,66 @@ async function handleCaptchaAndContinue() {
     }
   }
 }
-// IRCTC's payment tiles carry HTML entities and non-breaking spaces, so plain
-// textContent comparison misses labels that look identical on screen.
-function normalizePaymentText(value) {
-  return String(value || '')
-    .replace(/&amp;/gi, '&')
-    .replace(/ /g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-// Containment both ways: the configured value can be shorter than the tile label
-// ("PAYTM" vs "Paytm UPI") or longer ("BHIM/ UPI/ USSD" vs "BHIM").
-function pickPaymentTile(elements, candidates) {
-  const wanted = candidates.map(normalizePaymentText).filter(Boolean);
-
-  for (const element of elements) {
-    if (!isElementVisible(element)) continue;
-    const text = normalizePaymentText(element.innerText || element.textContent);
-    if (!text) continue;
-    if (wanted.some((candidate) => text.includes(candidate) || candidate.includes(text))) return element;
-  }
-  return null;
-}
-
-// Returns the group element that was clicked, so the gateway step can re-click it.
 async function selectPaymentMethod() {
   // The tiles mount a moment after app-payment-options itself, so querying
   // straight away used to run against an empty list and select nothing (#94).
   await waitForElementToAppear(PAYMENT_METHOD, PAYMENT_OPTIONS_WAIT_TIME);
 
-  const groups = Array.from(document.querySelectorAll(PAYMENT_METHOD));
-  if (!groups.length) {
-    Logger.warn('No payment groups found with:', PAYMENT_METHOD);
-    return null;
-  }
+  // Find all elements with the class "bank-type" and "ng-star-inserted"
+  var elements = document.querySelectorAll(PAYMENT_METHOD);
 
-  let group = pickPaymentTile(groups, [paymentMethod]);
-  if (!group) {
-    group = pickPaymentTile(groups, PAYMENT_METHOD_FALLBACKS);
-    if (group) {
-      Logger.warn(`Payment method "${paymentMethod}" is not on the page; falling back to:`, (group.innerText || '').trim());
+  // Check if elements exist
+  if (elements.length > 0) {
+    // Loop through each element
+    for (var i = 0; i < elements.length; i++) {
+      var element = elements[i];
+      // Check if the element's text content matches "BHIM/ UPI/ USSD"
+      if (textIncludes(element.textContent, paymentMethod)) {
+        // Click on the element
+        await humanClick(element);
+        Logger.info('Clicked on :', paymentMethod);
+        return; // Exit the loop after clicking the element
+      }
     }
+  } else {
+    Logger.info('No elements found with the specified classes.');
   }
-  if (!group) {
-    Logger.error(`Payment method "${paymentMethod}" not found and no fallback group is available.`);
-    return null;
-  }
-
-  await humanClick(group);
-  Logger.info('Clicked on :', (group.innerText || group.textContent || '').trim());
-  return group;
 }
-
-// Pick the gateway tile in the right-hand column. IRCTC will not generate the iPay
-// QR, or accept the submit, until one is selected. Two passes: the column is
-// sometimes painted before it holds the tiles for the group just clicked, and
-// re-clicking the group refills it.
-async function selectPaymentProvider(paymentGroup) {
+async function selectPaymentProvider() {
+  // The provider list only renders after a payment method has been picked.
   await waitForElementToAppear(PAYMENT_PROVIDER, PAYMENT_OPTIONS_WAIT_TIME);
 
-  let selected = null;
+  // Find all elements with the class "bank-text"
+  var elements = document.querySelectorAll(PAYMENT_PROVIDER);
 
-  for (let attempt = 1; attempt <= 2 && !selected; attempt += 1) {
-    if (attempt > 1 && paymentGroup) {
-      Logger.info('No gateway tile yet; re-selecting the payment group.');
-      await humanClick(paymentGroup);
-      await delay(260);
-      await waitForElementToAppear(PAYMENT_PROVIDER, 6500);
-    }
-
-    const tiles = Array.from(document.querySelectorAll(PAYMENT_PROVIDER));
-    selected = pickPaymentTile(tiles, [paymentProvider]);
-    if (!selected) {
-      selected = pickPaymentTile(tiles, PAYMENT_PROVIDER_FALLBACKS);
-      if (selected) {
-        Logger.warn(`Gateway "${paymentProvider}" is not on the page; falling back to:`, (selected.innerText || '').trim());
+  // Check if elements exist
+  if (elements.length > 0) {
+    // Loop through each element
+    for (var i = 0; i < elements.length; i++) {
+      var element = elements[i];
+      // Check if the element's text content contains "PAYTM"
+      if (textIncludes(element.textContent, paymentProvider)) {
+        // Simulate a click on the element
+        await humanClick(element);
+        Logger.info('Selected text:', element.textContent);
+        return; // Exit the loop after selecting the text
       }
     }
   }
-
-  if (!selected) {
-    Logger.error(`No gateway matched "${paymentProvider}". IRCTC will not accept the payment without one.`);
-    return false;
-  }
-
-  selected.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  await delay(180);
-  await humanClick(selected);
-  Logger.info('Selected gateway:', (selected.innerText || selected.textContent || '').trim());
-  return true;
+  Logger.info("No text found containing",paymentProvider);
 }
-
 async function clickPayButton() {
-  const buttons = Array.from(document.querySelectorAll(PAY_BUTTON))
-    .filter((button) => !button.disabled && isElementVisible(button));
+  // Find the button with the class "btn-primary" and "ng-star-inserted"
+  var button = document.querySelector(PAY_BUTTON);
 
-  // The label differs per gateway, so PAY_BUTTON_TEXT is a preference, not a condition.
-  const button = buttons.find((candidate) => textIncludes(candidate.textContent, PAY_BUTTON_TEXT))
-    || buttons[0];
-
-  if (!button) {
-    Logger.warn('No enabled pay button found with:', PAY_BUTTON);
-    return false;
+  // Check if the button exists and its text content contains "Pay"
+  if (button && textIncludes(button.textContent, PAY_BUTTON_TEXT)) {
+    // Simulate a click on the button
+    await humanClick(button);
+    Logger.info('Clicked on button:', button.textContent);
+  } else {
+    Logger.info("No button found containing 'Pay'.");
   }
-
-  button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  await delay(180);
-  await humanClick(button);
-  Logger.info('Clicked on button:', (button.textContent || '').trim());
-  return true;
 }
 
 // Function to click the confirm button in the eWallet component
@@ -2004,61 +1469,42 @@ function hasReachedTargetTime(currentTimeString, targetTimeString) {
     (currentHour === targetHour && currentMinute > targetMinute) ||
     (currentHour === targetHour && currentMinute === targetMinute && currentSecond >= targetSecond);
 }
-// Resolves once Search has actually been clicked, so a retry cannot fire the
-// search before the Tatkal window opens.
 function waitForTargetTime(targetTimeString) {
-  return new Promise((resolve) => {
-    const searchButton = document.querySelector(JOURNEY_SEARCH_BUTTON);
+  const searchButton = document.querySelector(JOURNEY_SEARCH_BUTTON);
 
-    if (!searchButton) {
-      resolve(false);
-      return;
-    }
-
-    if (!shouldUseTimedSearch()) {
-      humanClick(searchButton).then(() => resolve(true));
-      return;
-    }
-
-    const intervalId = setInterval(() => {
-      // Extract the current time element
-      const currentTimeElement = document.querySelector(CURRENT_TIME);
-
-      if (!currentTimeElement) {
-        Logger.error('Current time element not found.');
-        clearInterval(intervalId);
-        resolve(false);
-        return;
-      }
-
-      const currentDateTimeString = currentTimeElement.textContent.trim();
-      const timeMatch = currentDateTimeString.match(/\[(\d+:\d+:\d+)\]/);
-
-      if (!timeMatch) {
-        Logger.error('Current time format not recognized:', currentDateTimeString);
-        clearInterval(intervalId);
-        resolve(false);
-        return;
-      }
-
-      if (hasReachedTargetTime(timeMatch[1], targetTimeString)) {
-        clearInterval(intervalId);
-        humanClick(searchButton).then(() => resolve(true));
-      }
-    }, 1000);
-  });
-}
-// Re-submit the journey search after IRCTC rejected it. Once a search has been
-// made the form is rendered by app-modify-search instead of app-jp-input.
-async function clickSearchButton() {
-  const searchButton = document.querySelector(JOURNEY_SEARCH_BUTTON) ||
-    document.querySelector(`${MODIFY_SEARCH_COMPONENT} button[type="submit"]`);
-
-  if (searchButton) {
-    await humanClick(searchButton);
-  } else {
-    Logger.warn('Search button not found for retry.');
+  if (!searchButton) {
+    return;
   }
+
+  if (!shouldUseTimedSearch()) {
+    humanClick(searchButton);
+    return;
+  }
+
+  const intervalId = setInterval(() => {
+    // Extract the current time element
+    const currentTimeElement = document.querySelector(CURRENT_TIME);
+
+    if (!currentTimeElement) {
+      Logger.error('Current time element not found.');
+      clearInterval(intervalId);
+      return;
+    }
+
+    const currentDateTimeString = currentTimeElement.textContent.trim();
+    const timeMatch = currentDateTimeString.match(/\[(\d+:\d+:\d+)\]/);
+
+    if (!timeMatch) {
+      Logger.error('Current time format not recognized:', currentDateTimeString);
+      clearInterval(intervalId);
+      return;
+    }
+
+    if (hasReachedTargetTime(timeMatch[1], targetTimeString)) {
+      humanClick(searchButton);
+      clearInterval(intervalId);
+    }
+  }, 1000);
 }
 async function getSettings() {
   return new Promise((resolve) => {
@@ -2070,8 +1516,7 @@ async function getSettings() {
       }
 
       const items = result[STORAGE_KEY] || defaultSettings;
-      // Debug logs get pasted into bug reports; keep the password out of them.
-      Logger.info('Settings loaded:', { ...items, password: items.password ? '********' : '' });
+      Logger.info('Settings loaded:', items);
       // Now 'items' will contain all the settings, either retrieved from storage or the defaults
       username = items.username;
       password = items.password;
@@ -2084,17 +1529,11 @@ async function getSettings() {
       trainNumber = items.trainNumber;
       from = items.from;
       to = items.to;
-      boardingStation = items.boardingStation || '';
       quotaType = items.quotaType;
       isOpeningDayBooking = items.isOpeningDayBooking;
       accommodationClass = items.accommodationClass;
-// Stored as YYYY-MM-DD; IRCTC wants DD/MM/YYYY. Reorder the parts rather
-// than going through Date, which reads the string as UTC midnight and
-// lands on the previous day in timezones behind UTC.
-dateString = (items.dateString || '').split('-').reverse().join('/');
-// Floored: anything faster than 2s is a request rate no person can produce,
-// and it is the availability enquiry that IRCTC rate-limits hardest.
-refreshTime = Math.max(MIN_REFRESH_TIME, Number(items.refreshTime) || MIN_REFRESH_TIME);
+      dateString = new Date(items.dateString).toLocaleDateString('en-GB');
+      refreshTime = items.refreshTime;
       autoPay = items.autoPay;
       paymentType = items.paymentType;
       paymentMethod = items.paymentMethod;
@@ -2126,163 +1565,22 @@ function getAutomationStatus() {
     });
   });
 }
-// Find the language button for the configured language, anywhere in a dialog that
-// is actually painted.
-function findLanguageButton() {
-  let buttons;
-  try {
-    buttons = document.querySelectorAll(`${DIALOG_COMPONENT} ${LANGUAGE_BUTTON}`);
-  } catch (err) {
-    Logger.error('Invalid language button selector:', LANGUAGE_BUTTON, err);
-    return null;
-  }
+async function dismissLanguagePopup() {
+    // Wait up to 2.5 seconds for the language dialog to appear (it sometimes takes a moment to render)
+    const dialogAppeared = await waitForElementToAppear(DIALOG_COMPONENT, 2500);
+    if (!dialogAppeared) return;
 
-  for (const button of buttons) {
-    if (!isElementVisible(button)) continue;
-    if ((button.innerText || '').trim() === preferredLanguage) return button;
-  }
-  return null;
-}
-
-// Close IRCTC's language dialog. The wait is on the language button, not on
-// DIALOG_COMPONENT: IRCTC keeps an empty <p-dialog modal="true"> in the page from the
-// start, so waiting on that resolved before the real dialog rendered.
-async function dismissLanguagePopup(timeoutMs = LANGUAGE_POPUP_WAIT_TIME) {
-    const targetButton = await waitForCondition(findLanguageButton, timeoutMs);
-    if (!targetButton) return false;
-
-    Logger.info('Dismissing language popup with: ' + preferredLanguage);
-    const dialog = targetButton.closest(DIALOG_COMPONENT) || targetButton;
-    await humanClick(targetButton);
-    await waitForElementToDisappear(dialog, 2000);
-
-    // A click that landed on the login overlay instead leaves the dialog up; one
-    // more attempt, then leave it to the user rather than clicking indefinitely.
-    if (findLanguageButton()) {
-      Logger.warn('Language popup is still open; clicking once more.');
-      const retryButton = findLanguageButton();
-      await humanClick(retryButton);
-      await waitForElementToDisappear(retryButton.closest(DIALOG_COMPONENT) || retryButton, 2000);
+    const dialogs = document.querySelectorAll(DIALOG_COMPONENT);
+    for (let dialog of dialogs) {
+        const buttons = Array.from(dialog.querySelectorAll(LANGUAGE_BUTTON));
+        const targetButton = buttons.find(btn => btn.innerText.trim() === preferredLanguage);
+        if (targetButton) {
+            Logger.info("Dismissing language popup with: " + preferredLanguage);
+            await humanClick(targetButton);
+            await waitForElementToDisappear(dialog, 500); // Wait for it to be removed from DOM
+            return;
+        }
     }
-    return true;
-}
-
-// Wait for a page transition, retrying `retryAction` while IRCTC keeps answering
-// with a transient error. Always on: a high-load rejection is not a preference,
-// and a run with recovery turned off just hangs on the same click.
-// Returns false when the run cannot continue.
-async function advance(name, target, retryAction) {
-  const result = await advanceOrRetry({
-    name,
-    target,
-    retryAction,
-    errorSelector: ERROR_MESSAGE,
-    inlineScope: ERROR_INLINE_SCOPE,
-    dismissSelector: ERROR_DISMISS,
-    loaderSelector: LOADER,
-    // Lets the retry loop tell "IRCTC is busy" apart from "IRCTC logged us out".
-    loginSelector: name === 'login' ? undefined : LOGIN_COMPONENT,
-    click: humanClick,
-  });
-
-  if (!result.ok) {
-    const prefixes = {
-      terminal: 'IRCTC stopped the booking',
-      'session-lost': 'IRCTC signed you out',
-      stalled: 'IRCTC stopped responding',
-    };
-    const prefix = prefixes[result.reason]
-      || `IRCTC kept failing through ${result.attempts} retry attempt(s) over ${Math.round((result.elapsedMs || 0) / 1000)}s`;
-    alert(`${prefix} at "${name}":\n\n${result.error.message}\n\nPlease continue manually.`);
-  }
-
-  return result.ok;
-}
-
-// Re-submit the passenger page after a rejected Continue. If IRCTC answered
-// "high load" AFTER the form was filled, the filled rows are still in the
-// DOM — re-running the fill would add duplicate passenger rows. So: form
-// survived? just click Continue again. Form wiped? clear leftovers, refill,
-// then submit.
-async function retryPassengerSubmit() {
-  if (!document.querySelector(PASSENGER_APP_COMPONENT)) {
-    Logger.warn("Passenger page is no longer on screen - nothing to re-submit.");
-    return;
-  }
-
-  const rows = document.querySelectorAll(PASSENGER_COMPONENT);
-  const formLooksFilled = rows.length > 0 && Array.from(rows).some((row) => {
-    const nameInput = row.querySelector(PASSENGER_NAME_INPUT);
-    return !!(nameInput && (nameInput.value || "").trim().length > 0);
-  });
-
-  if (formLooksFilled) {
-    Logger.info("Passenger form survived the error - re-submitting it unchanged.");
-    const continueButton = document.querySelector(PASSENGER_SUBMIT_BUTTON);
-    if (!continueButton) {
-      Logger.error("Continue button not found on the passenger page.");
-      return;
-    }
-    continueButton.focus();
-    await humanClick(continueButton);
-    return;
-  }
-
-  Logger.warn("Passenger form was reset by IRCTC - clearing leftover rows and filling it again.");
-  await resetPassengerRowsToOne();
-  await addPassengerInputAndContinue();
-}
-
-// IRCTC can wipe the passenger rows on a rejected submit; drop everything
-// except the first row so the refill starts from a known state.
-async function resetPassengerRowsToOne() {
-  let guard = 0;
-  const maxRemovals = 10; // never remove more rows than we could have added
-  while (guard < maxRemovals) {
-    const rows = document.querySelectorAll(PASSENGER_COMPONENT);
-    if (rows.length <= 1) break;
-    const removeLink = document.querySelector(PASSENGER_REMOVE_ROW);
-    if (!removeLink) break;
-    await humanClick(removeLink);
-    await delay(300);
-    guard += 1;
-  }
-}
-
-// Re-click the journey Search button. The form is already filled by// callSearchTrainComponent(), so a high-load rejection only needs the click
-// replayed — never a full re-fill that would type the stations twice.
-async function clickSearchButton() {
-  const searchButton = document.querySelector(JOURNEY_SEARCH_BUTTON);
-  if (searchButton) {
-    await humanClick(searchButton);
-  } else {
-    Logger.warn("Search button not found for retry.");
-  }
-}
-
-// Wait for a page transition, retrying `retryAction` while IRCTC keeps
-// answering with a transient error. Always on: a high-load rejection is not a
-// preference, and a run with recovery turned off just hangs on the same click.
-// A plain timeout (no error, no page change) is NOT retried — IRCTC is merely
-// slow, and replaying the step could double-submit something it accepted.
-async function advance(name, target, retryAction) {
-  const result = await advanceOrRetry({
-    name,
-    target,
-    retryAction,
-    errorSelector: ERROR_MESSAGE,
-    dismissSelector: ERROR_DISMISS,
-    linkSelector: ERROR_TOAST_LINK,
-    loaderSelector: LOADER,
-    click: humanClick,
-  });
-  if (!result.ok) {
-    const prefix = result.reason === "terminal"
-      ? "IRCTC stopped the booking"
-      : "IRCTC kept failing through " + result.attempts + " retry attempt(s)";
-    alert(prefix + " at \"" + name + "\":\n\n" + result.error.message + "\n\nPlease continue manually.");
-  }
-  return result.ok;
 }
 
 async function executeFunctions() {
@@ -2302,41 +1600,19 @@ async function executeFunctions() {
     // wait for home page to load
     await waitForElementToAppear(APP_HEADER);
 
-    // The language dialog has to be gone before the login modal opens: a modal
-    // stacked on top of it leaves it open, and its overlay then eats every click.
+    // Dismiss any initial popups (like language selection)
     await dismissLanguagePopup();
 
     // login page < Page 0 > (a prompt will appear to fill captcha)
     await login();
-<<<<<<< HEAD
-    if (!(await advance('login', { disappear: LOGIN_COMPONENT }, login))) return;
-
-    // IRCTC sometimes renders the dialog only once the login modal is already up,
-    // so it can still be sitting on the page at this point.
-    await dismissLanguagePopup(1500);
-
-    await callSearchTrainComponent();
-
-    // Clicks Search itself, at the Tatkal opening second for timed quotas
-    await waitForTargetTime(targetTime);
-
-    // wait for train list page to load
-    if (!(await advance('train search', { appear: TRAIN_LIST_COMPONENT }, clickSearchButton))) return;
-=======
-    if (!(await advance("login", { disappear: LOGIN_COMPONENT }, login))) return;
     await waitForAppLoginToDisappear();
     await callSearchTrainComponent();
     waitForTargetTime(targetTime);
     
-    // wait for train list page to load; under load IRCTC answers the search
-    // with a high-load toast instead of the train list, so re-click Search
-    // (the form is already filled) until the list renders.
-    if (!(await advance("train search", { appear: TRAIN_LIST_COMPONENT }, clickSearchButton))) return;
->>>>>>> fix/high-load-retry-v2
+    // wait for train list page to load
+    await waitForElementToAppear(TRAIN_LIST_COMPONENT);
 
-    // select train and accommodation class < Page 1 >. bookTicket() carries its
-    // own high-load recovery for the availability loop; re-entering it after a
-    // rejected Book Now re-checks the class and clicks Book Now once.
+    // select train and accommodation class < Page 1 >
     await bookTicket();
 
     if(autoProcessPopup){
@@ -2344,50 +1620,25 @@ async function executeFunctions() {
     }
 
     // Wait for passenger page to load
-<<<<<<< HEAD
-    if (!(await advance('seat selection', { appear: PASSENGER_APP_COMPONENT }, retryBookTicket))) return;
-=======
-    if (!(await advance("seat selection", { appear: PASSENGER_APP_COMPONENT }, bookTicket))) return;
->>>>>>> fix/high-load-retry-v2
+    await waitForElementToAppear(PASSENGER_APP_COMPONENT);
 
-    // Passenger Input and Payment Type < Page 2 >. The 45 s minimum hold is
-    // honoured inside addPassengerInputAndContinue before Continue is clicked.
+    // Passenger Input and Payment Type < Page 2 >
     await addPassengerInputAndContinue();
 
-<<<<<<< HEAD
-    // Wait for the ticket review and Captcha page load. The retry re-submits the
-    // existing form instead of re-running the fill, so a rejected Continue cannot
-    // duplicate passenger rows.
-    if (!(await advance('passenger details', { appear: REVIEW_COMPONENT }, retryPassengerSubmit))) return;
-=======
-    // Wait for the ticket review and Captcha page load. The retry re-submits
-    // the existing form instead of re-running the fill, so a rejected Continue
-    // cannot duplicate passenger rows.
-    if (!(await advance("passenger details", { appear: REVIEW_COMPONENT }, retryPassengerSubmit))) return;
->>>>>>> fix/high-load-retry-v2
+    // Wait for the ticket review and Captcha page load
+    await waitForElementToAppear(REVIEW_COMPONENT);
 
     // Review and Captcha <Page 3>   (a prompt will appear to fill captcha)
     await handleCaptchaAndContinue();
 
     // Wait for the app-payment-options element to appear on the page after the transition
-<<<<<<< HEAD
-    if (!(await advance('review & captcha', { appear: PAYMENT_COMPONENT }, handleCaptchaAndContinue))) return;
-=======
-    if (!(await advance("review & captcha", { appear: PAYMENT_COMPONENT }, handleCaptchaAndContinue))) return;
->>>>>>> fix/high-load-retry-v2
+    await waitForElementToAppear(PAYMENT_COMPONENT);
 
     // Payment Selection <Page 4>
-    const paymentGroup = await selectPaymentMethod();
-    const gatewaySelected = await selectPaymentProvider(paymentGroup);
+    await selectPaymentMethod();
+    await selectPaymentProvider();
 
     if (autoPay) {
-      // Submitting with no gateway selected is what produced the dead IRCTC iPay
-      // page: it loads, but IRCTC never generates the QR. Hand it over instead.
-      if (!gatewaySelected) {
-        alert(`No payment gateway could be selected for "${paymentProvider}".\n\nPlease pick one on the payment page and pay manually.`);
-        return;
-      }
-
       await clickPayButton();
 
       // Payment Confirmation for Ewallet <Page 5>

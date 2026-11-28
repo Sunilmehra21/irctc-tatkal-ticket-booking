@@ -25,12 +25,12 @@ const SELECTOR_CATEGORIES = {
     label: 'Journey Search Elements',
     selectors: {
       JOURNEY_INPUT_COMPONENT: { label: 'Journey Input Component', default: 'app-jp-input' },
-      ORIGIN_STATION_CODE: { label: 'Origin Station Input', default: 'input#origin, #origin input' },
-      DESTINATION_STATION_CODE: { label: 'Destination Station Input', default: 'input#destination, #destination input' },
+      ORIGIN_STATION_CODE: { label: 'Origin Station Input', default: '#origin input' },
+      DESTINATION_STATION_CODE: { label: 'Destination Station Input', default: '#destination input' },
       STATION_CODE_LIST: { label: 'Station Autocomplete List', default: '.ui-autocomplete-items li' },
       JOURNEY_QUOTA: { label: 'Journey Quota Dropdown', default: '#journeyQuota>div' },
       JOURNEY_QUOTA_LIST: { label: 'Quota Dropdown Items', default: '#journeyQuota p-dropdownitem span' },
-      JOURNEY_DATE: { label: 'Journey Date Input', default: 'input#jDate, #jDate input' },
+      JOURNEY_DATE: { label: 'Journey Date Input', default: '#jDate input' },
       CURRENT_TIME: { label: 'Current Time Display', default: 'app-header .h_head1>span strong' },
       JOURNEY_SEARCH_BUTTON: {
         label: 'Search Trains',
@@ -42,7 +42,7 @@ const SELECTOR_CATEGORIES = {
     label: 'Modify Search Elements',
     selectors: {
       MODIFY_SEARCH_COMPONENT: { label: 'Modify Search Component', default: 'app-modify-search' },
-      MODIFY_JOURNEY_DATE: { label: 'Modify Journey Date Input', default: 'input#journeyDate, #journeyDate input' },
+      MODIFY_JOURNEY_DATE: { label: 'Modify Journey Date Input', default: '#journeyDate input' },
     },
   },
   TRAIN_LIST: {
@@ -54,11 +54,11 @@ const SELECTOR_CATEGORIES = {
       AVAILABLE_CLASS: { label: 'Available Class Element', default: '.pre-avl' },
       SELECTED_CLASS_TAB: {
         label: 'Selected Class Tab',
-        default: '.ui-tabmenu-nav li[role="tab"][aria-selected="true"] a',
+        default: 'p-tabmenu li[role="tab"][aria-selected="true"][aria-expanded="true"] a>div',
       },
       BOOK_NOW_BUTTON: { label: 'Book Now Button', default: 'button.btnDefault.train_Search' },
       BUTTON_DISABLE_CLASS: { label: 'Button Disabled Class', default: 'disable-book' },
-      LINK_INSERTED: { label: 'Availability Refresh Marker', default: '.pre-avl' },
+      LINK_INSERTED: { label: 'Link Inserted Element', default: '.link.ng-star-inserted' },
     },
   },
   POPUP: {
@@ -86,9 +86,6 @@ const SELECTOR_CATEGORIES = {
       PASSENGER_MOBILE_NUMBER: { label: 'Mobile Number Input (ID)', default: 'mobileNumber' },
       PASSENGER_PREFERENCE_AUTOUPGRADATION: { label: 'Auto Upgradation Checkbox (ID)', default: 'autoUpgradation' },
       PASSENGER_PREFERENCE_CONFIRMBERTHS: { label: 'Confirm Berths Checkbox (ID)', default: 'confirmberths' },
-      PASSENGER_PREFERENCE_NOFOOD: { label: 'No Food Checkbox', default: 'input[formcontrolname="noFood"]' },
-      PASSENGER_NO_FOOD_DIALOG: { label: 'No Food Confirmation Dialog', default: 'p-confirmdialog .ui-confirmdialog' },
-      PASSENGER_NO_FOOD_DIALOG_OK_TEXT: { label: 'No Food Confirmation OK Text', default: 'OK' },
       PASSENGER_PREFERENCE_TRAVELINSURANCEOPTED: {
         label: 'Travel Insurance Radio',
         default: 'input[type="radio"][name="travelInsuranceOpted-0"]',
@@ -118,9 +115,9 @@ const SELECTOR_CATEGORIES = {
       PAYMENT_COMPONENT: { label: 'Payment Options Component', default: 'app-payment-options' },
       PAYMENT_TYPE: { label: 'Payment Category (#pay-type)', default: '#pay-type .bank-type' },
       PAYMENT_METHOD: { label: 'Payment Method Element', default: '#pay-type .bank-type' },
-      PAYMENT_PROVIDER: { label: 'Payment Gateway Tile', default: '.border-all.no-pad' },
-      PAY_BUTTON: { label: 'Pay Button', default: '.btn-primary' },
-      PAY_BUTTON_TEXT: { label: 'Pay Button Text', default: 'Pay & Book' },
+      PAYMENT_PROVIDER: { label: 'Payment Bank/Provider (Precision)', default: '#bank-type .bank-text, #bank-type .pay_tax_text' },
+      PAY_BUTTON: { label: 'Pay Button', default: 'button.btn-primary.ng-star-inserted' },
+      PAY_BUTTON_TEXT: { label: 'Pay Button Text', default: 'Pay & Book ' },
     },
   },
   EWALLET: {
@@ -130,39 +127,6 @@ const SELECTOR_CATEGORIES = {
       EWALLET_COMPONENT: { label: 'eWallet Component', default: 'app-ewallet-confirm' },
       EWALLET_BUTTON_LIST: { label: 'eWallet Button List', default: 'button.mob-bot-btn.search_btn' },
       EWALLET_CONFIRM_BUTTON_TEXT: { label: 'Confirm Button Text', default: 'CONFIRM' },
-    },
-  },
-  ERROR: {
-    label: 'Error Handling Elements',
-    selectors: {
-      ERROR_MESSAGE: {
-        label: 'Error Message Containers (high load / server errors)',
-<<<<<<< HEAD
-        default: 'p-toast .ui-toast-detail, p-toast .ui-toast-summary, p-toast .ui-toast-message-text-content',
-      },
-      ERROR_DISMISS: {
-        label: 'Error Toast Close Icon',
-        default: 'p-toast .ui-toast-close-icon, app-train-avl-enq .link > .fa-close',
-      },
-      ERROR_INLINE_SCOPE: {
-        label: 'Inline Error Scope (train row)',
-        default: 'app-train-avl-enq',
-=======
-        default: '.ui-toast-message-text-content, .ui-toast-detail, .ui-toast-summary, .ui-growl-item-container, .toast-message, [role="alert"]',
-      },
-      ERROR_DISMISS: {
-        label: 'Error Toast Close Icon',
-        default: '.ui-toast-close-icon, .toast-close-button, .ui-growl-icon-close',
-      },
-      ERROR_TOAST_LINK: {
-        label: 'Retry Link Inside Error Toast',
-        default: '#divMain > div > app-train-list > p-toast > div > p-toastitem > div > div > a, body > app-root > app-home > div.header-fix > app-header > p-toast > div > p-toastitem > div > div > a',
->>>>>>> fix/high-load-retry-v2
-      },
-      LOADER: {
-        label: 'Loading Overlay ("Please Wait...")',
-        default: '#loaderP, .loader, .loadding, .spinner, .spinner-border, ngx-spinner, .ngx-spinner-overlay, .loader-container',
-      },
     },
   },
 };
