@@ -54,11 +54,11 @@ const SELECTOR_CATEGORIES = {
       AVAILABLE_CLASS: { label: 'Available Class Element', default: '.pre-avl' },
       SELECTED_CLASS_TAB: {
         label: 'Selected Class Tab',
-        default: 'p-tabmenu li[role="tab"][aria-selected="true"][aria-expanded="true"] a>div',
+        default: '.ui-tabmenu-nav li[role="tab"][aria-selected="true"] a',
       },
       BOOK_NOW_BUTTON: { label: 'Book Now Button', default: 'button.btnDefault.train_Search' },
       BUTTON_DISABLE_CLASS: { label: 'Button Disabled Class', default: 'disable-book' },
-      LINK_INSERTED: { label: 'Link Inserted Element', default: '.link.ng-star-inserted' },
+      LINK_INSERTED: { label: 'Availability Refresh Marker', default: '.pre-avl' },
     },
   },
   POPUP: {
@@ -118,9 +118,9 @@ const SELECTOR_CATEGORIES = {
       PAYMENT_COMPONENT: { label: 'Payment Options Component', default: 'app-payment-options' },
       PAYMENT_TYPE: { label: 'Payment Category (#pay-type)', default: '#pay-type .bank-type' },
       PAYMENT_METHOD: { label: 'Payment Method Element', default: '#pay-type .bank-type' },
-      PAYMENT_PROVIDER: { label: 'Payment Bank/Provider (Precision)', default: '#bank-type .bank-text, #bank-type .pay_tax_text' },
-      PAY_BUTTON: { label: 'Pay Button', default: 'button.btn-primary.ng-star-inserted' },
-      PAY_BUTTON_TEXT: { label: 'Pay Button Text', default: 'Pay & Book ' },
+      PAYMENT_PROVIDER: { label: 'Payment Gateway Tile', default: '.border-all.no-pad' },
+      PAY_BUTTON: { label: 'Pay Button', default: '.btn-primary' },
+      PAY_BUTTON_TEXT: { label: 'Pay Button Text', default: 'Pay & Book' },
     },
   },
   EWALLET: {
@@ -130,6 +130,27 @@ const SELECTOR_CATEGORIES = {
       EWALLET_COMPONENT: { label: 'eWallet Component', default: 'app-ewallet-confirm' },
       EWALLET_BUTTON_LIST: { label: 'eWallet Button List', default: 'button.mob-bot-btn.search_btn' },
       EWALLET_CONFIRM_BUTTON_TEXT: { label: 'Confirm Button Text', default: 'CONFIRM' },
+    },
+  },
+  ERROR: {
+    label: 'Error Handling Elements',
+    selectors: {
+      ERROR_MESSAGE: {
+        label: 'Error Message Containers (high load / server errors)',
+        default: 'p-toast .ui-toast-detail, p-toast .ui-toast-summary, p-toast .ui-toast-message-text-content',
+      },
+      ERROR_DISMISS: {
+        label: 'Error Toast Close Icon',
+        default: 'p-toast .ui-toast-close-icon, app-train-avl-enq .link > .fa-close',
+      },
+      ERROR_INLINE_SCOPE: {
+        label: 'Inline Error Scope (train row)',
+        default: 'app-train-avl-enq',
+      },
+      LOADER: {
+        label: 'Loading Overlay ("Please Wait...")',
+        default: '#loaderP, .loader, .loadding, .spinner, .spinner-border, ngx-spinner, .ngx-spinner-overlay, .loader-container',
+      },
     },
   },
 };
